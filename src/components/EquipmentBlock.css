@@ -1,0 +1,58 @@
+.equipment-block {
+  position: absolute;
+  border: 2px solid;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  transition: box-shadow 0.15s;
+  user-select: none;
+  overflow: hidden;
+}
+
+.equipment-block:active {
+  cursor: grabbing;
+}
+
+.equipment-block.selected {
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.4);
+  z-index: 10;
+}
+
+.block-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-align: center;
+  padding: 2px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+.block-actions {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: flex;
+  gap: 2px;
+}
+
+.block-actions button {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.5);
+  border: none;
+}
+
+.block-actions .remove-btn:hover {
+  background: var(--danger);
+}

@@ -1,0 +1,21 @@
+.floor-plan-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.grid-dimensions {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.floor-plan-grid {
+  position: relative;
+  background-color: #12122a;
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  border: 2px solid var(--border-color);
+  border-radius: 4px;
+}

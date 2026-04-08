@@ -1,0 +1,45 @@
+.room-setup {
+  padding: 16px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.section-title {
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.field-group {
+  display: flex;
+  gap: 10px;
+}
+
+.field-group label {
+  flex: 1;
+}
+
+.room-setup label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.room-setup input {
+  width: 100%;
+}
+
+.room-info {
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 6px;
+  background: var(--bg-primary);
+  border-radius: 4px;
+}
