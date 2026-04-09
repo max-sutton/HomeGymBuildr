@@ -1,4 +1,4 @@
-import type { PlacedEquipment, Equipment, GymRoom } from '../types'
+import type { PlacedEquipment, Equipment, GymRoom, FloorRegion, Wall } from '../types'
 import { equipmentCatalog } from '../data/equipmentCatalog'
 
 function getEquipment(id: string): Equipment | undefined {
@@ -77,15 +77,61 @@ export function checkClearance(
   return true
 }
 
+/** Check if a rectangle is fully contained within at least the union of floor regions */
+function isRectOnFloor(rect: Rect, regions: FloorRegion[]): boolean {
+  // For each unit cell the item occupies, check that at least one region covers it
+  for (let cx = rect.x; cx < rect.x + rect.width; cx++) {
+    for (let cy = rect.y; cy < rect.y + rect.height; cy++) {
+      const covered = regions.some(
+        (r) => cx >= r.x && cx < r.x + r.width && cy >= r.y && cy < r.y + r.height
+      )
+      if (!covered) return false
+    }
+  }
+  return true
+}
+
+/** Check if a wall cuts through a rectangle's interior */
+function wallCutsRect(rect: Rect, walls: Wall[]): boolean {
+  for (const w of walls) {
+    if (w.orientation === 'horizontal') {
+      // Horizontal wall at (w.x, w.y) sits on the line between row w.y-1 and row w.y.
+      // It blocks if the wall's y is strictly inside the rect's vertical span
+      // and the wall's x is within the rect's horizontal span.
+      if (w.y > rect.y && w.y < rect.y + rect.height && w.x >= rect.x && w.x < rect.x + rect.width) {
+        return true
+      }
+    } else {
+      // Vertical wall at (w.x, w.y) sits on the line between col w.x-1 and col w.x.
+      if (w.x > rect.x && w.x < rect.x + rect.width && w.y >= rect.y && w.y < rect.y + rect.height) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
 /** Check if an item fits entirely within the room bounds */
 export function isWithinBounds(item: PlacedEquipment, room: GymRoom): boolean {
   const eq = getEquipment(item.equipmentId)
   if (!eq) return false
   const dims = getEffectiveDimensions(item, eq)
-  return (
-    item.x >= 0 &&
-    item.y >= 0 &&
-    item.x + dims.width <= room.width &&
-    item.y + dims.depth <= room.depth
-  )
+
+  // Must be within the overall grid canvas
+  if (item.x < 0 || item.y < 0) return false
+  if (item.x + dims.width > room.width || item.y + dims.depth > room.depth) return false
+
+  const rect: Rect = { x: item.x, y: item.y, width: dims.width, height: dims.depth }
+
+  // If floor regions are defined, item must sit entirely on floor
+  if (room.floorRegions.length > 0) {
+    if (!isRectOnFloor(rect, room.floorRegions)) return false
+  }
+
+  // Equipment cannot span across a wall
+  if (room.walls.length > 0) {
+    if (wallCutsRect(rect, room.walls)) return false
+  }
+
+  return true
 }

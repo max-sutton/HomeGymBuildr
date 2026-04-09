@@ -18,6 +18,11 @@
   border-left: 1px solid var(--border-color);
 }
 
+.sidebar-left.drag-over {
+  background: rgba(231, 76, 60, 0.08);
+  border-color: var(--danger);
+}
+
 .main-area {
   display: flex;
   align-items: center;

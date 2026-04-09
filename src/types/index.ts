@@ -25,6 +25,29 @@ export interface PlacedEquipment {
   rotated: boolean
 }
 
+export interface FloorRegion {
+  /** Unique identifier */
+  id: string
+  /** Grid X position (feet from left) */
+  x: number
+  /** Grid Y position (feet from top) */
+  y: number
+  /** Width in feet */
+  width: number
+  /** Height in feet */
+  height: number
+}
+
+export interface Wall {
+  id: string
+  /** Grid x position of the wall segment */
+  x: number
+  /** Grid y position of the wall segment */
+  y: number
+  /** horizontal = wall along a row boundary, vertical = wall along a column boundary */
+  orientation: 'horizontal' | 'vertical'
+}
+
 export interface GymRoom {
   /** Room width in feet */
   width: number
@@ -34,6 +57,10 @@ export interface GymRoom {
   budget: number
   /** Equipment placed in the room */
   placedEquipment: PlacedEquipment[]
+  /** Custom floor plan regions — if non-empty, only these areas are valid floor */
+  floorRegions: FloorRegion[]
+  /** Interior walls drawn by the user */
+  walls: Wall[]
 }
 
 export const CATEGORY_COLORS: Record<EquipmentCategory, string> = {

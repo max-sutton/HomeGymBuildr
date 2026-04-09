@@ -10,6 +10,10 @@
   color: var(--text-secondary);
 }
 
+.floor-area {
+  color: #6ab0ff;
+}
+
 .floor-plan-grid {
   position: relative;
   background-color: #12122a;
@@ -18,4 +22,145 @@
     linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
   border: 2px solid var(--border-color);
   border-radius: 4px;
+}
+
+.floor-plan-grid.draw-mode {
+  cursor: crosshair;
+  border-color: #4a90d9;
+}
+
+.floor-plan-grid.erase-mode {
+  border-color: var(--danger);
+}
+
+.floor-plan-grid.wall-mode {
+  cursor: crosshair;
+  border-color: #e6b43c;
+}
+
+/* Floor region overlay system */
+.floor-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.floor-overlay.erase-mode {
+  pointer-events: auto;
+  z-index: 20;
+}
+
+.floor-dim {
+  position: absolute;
+  top: 0;
+  left: 0;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 2px;
+}
+
+/* Floor regions rendered without borders so adjacent ones merge seamlessly */
+.floor-region {
+  position: absolute;
+  background: #12122a;
+  border: none;
+  transition: background 0.15s;
+}
+
+.floor-region.erasable {
+  cursor: pointer;
+  border: 1px dashed transparent;
+}
+
+.floor-region.erasable:hover {
+  background: rgba(231, 76, 60, 0.2);
+  border-color: var(--danger);
+}
+
+/* Perimeter edges — thin border on the outer edge of the combined floor shape */
+.perimeter-edge {
+  position: absolute;
+  background: rgba(74, 144, 217, 0.5);
+  pointer-events: none;
+}
+
+/* Walls */
+.wall-segment {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  border-radius: 1px;
+}
+
+.wall-segment.horizontal {
+  background: #e6b43c;
+}
+
+.wall-segment.vertical {
+  background: #e6b43c;
+}
+
+.wall-segment.interactive {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.wall-segment.interactive:hover {
+  background: var(--danger);
+}
+
+/* Equipment drag preview ghost */
+.equipment-drag-preview {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  border: 2px dashed;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: left 0.05s, top 0.05s;
+}
+
+.equipment-drag-preview.valid {
+  opacity: 0.7;
+}
+
+.equipment-drag-preview.invalid {
+  background: rgba(231, 76, 60, 0.15);
+  border-color: var(--danger);
+  opacity: 0.6;
+}
+
+.drag-preview-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-primary);
+  opacity: 0.8;
+  text-align: center;
+  padding: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Draw preview */
+.draw-preview {
+  position: absolute;
+  background: rgba(74, 144, 217, 0.25);
+  border: 2px dashed #4a90d9;
+  border-radius: 2px;
+  z-index: 10;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.draw-preview-label {
+  font-size: 12px;
+  color: #6ab0ff;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 2px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
 }

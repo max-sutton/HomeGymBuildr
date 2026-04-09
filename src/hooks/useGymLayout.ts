@@ -1,5 +1,5 @@
 import { useReducer } from 'react'
-import type { GymRoom, PlacedEquipment } from '../types'
+import type { GymRoom, PlacedEquipment, FloorRegion, Wall } from '../types'
 
 export interface GymLayoutState {
   room: GymRoom
@@ -12,6 +12,11 @@ type Action =
   | { type: 'MOVE_EQUIPMENT'; payload: { instanceId: string; x: number; y: number } }
   | { type: 'ROTATE_EQUIPMENT'; payload: { instanceId: string } }
   | { type: 'REMOVE_EQUIPMENT'; payload: { instanceId: string } }
+  | { type: 'ADD_FLOOR_REGION'; payload: FloorRegion }
+  | { type: 'REMOVE_FLOOR_REGION'; payload: { id: string } }
+  | { type: 'CLEAR_FLOOR_REGIONS' }
+  | { type: 'TOGGLE_WALL'; payload: Wall }
+  | { type: 'CLEAR_WALLS' }
 
 export type GymLayoutDispatch = React.Dispatch<Action>
 
@@ -21,6 +26,8 @@ const initialState: GymLayoutState = {
     depth: 15,
     budget: 5000,
     placedEquipment: [],
+    floorRegions: [],
+    walls: [],
   },
 }
 
@@ -76,6 +83,52 @@ function gymLayoutReducer(state: GymLayoutState, action: Action): GymLayoutState
           placedEquipment: state.room.placedEquipment.filter(
             (item) => item.instanceId !== action.payload.instanceId
           ),
+        },
+      }
+    case 'ADD_FLOOR_REGION':
+      return {
+        ...state,
+        room: {
+          ...state.room,
+          floorRegions: [...state.room.floorRegions, action.payload],
+        },
+      }
+    case 'REMOVE_FLOOR_REGION':
+      return {
+        ...state,
+        room: {
+          ...state.room,
+          floorRegions: state.room.floorRegions.filter((r) => r.id !== action.payload.id),
+        },
+      }
+    case 'CLEAR_FLOOR_REGIONS':
+      return {
+        ...state,
+        room: {
+          ...state.room,
+          floorRegions: [],
+        },
+      }
+    case 'TOGGLE_WALL': {
+      const existing = state.room.walls.find(
+        (w) => w.x === action.payload.x && w.y === action.payload.y && w.orientation === action.payload.orientation
+      )
+      return {
+        ...state,
+        room: {
+          ...state.room,
+          walls: existing
+            ? state.room.walls.filter((w) => w.id !== existing.id)
+            : [...state.room.walls, action.payload],
+        },
+      }
+    }
+    case 'CLEAR_WALLS':
+      return {
+        ...state,
+        room: {
+          ...state.room,
+          walls: [],
         },
       }
     default:
