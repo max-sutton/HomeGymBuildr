@@ -1,5 +1,5 @@
 import { useReducer } from 'react'
-import type { GymRoom, PlacedEquipment, FloorRegion, Wall } from '../types'
+import type { GymRoom, PlacedEquipment, FloorRegion, Wall, CeilingZone } from '../types'
 
 export interface GymLayoutState {
   room: GymRoom
@@ -17,6 +17,10 @@ type Action =
   | { type: 'CLEAR_FLOOR_REGIONS' }
   | { type: 'TOGGLE_WALL'; payload: Wall }
   | { type: 'CLEAR_WALLS' }
+  | { type: 'SET_DEFAULT_CEILING_HEIGHT'; payload: number }
+  | { type: 'ADD_CEILING_ZONE'; payload: CeilingZone }
+  | { type: 'REMOVE_CEILING_ZONE'; payload: { id: string } }
+  | { type: 'CLEAR_CEILING_ZONES' }
 
 export type GymLayoutDispatch = React.Dispatch<Action>
 
@@ -25,9 +29,11 @@ const initialState: GymLayoutState = {
     width: 20,
     depth: 15,
     budget: 5000,
+    defaultCeilingHeight: 8,
     placedEquipment: [],
     floorRegions: [],
     walls: [],
+    ceilingZones: [],
   },
 }
 
@@ -129,6 +135,35 @@ function gymLayoutReducer(state: GymLayoutState, action: Action): GymLayoutState
         room: {
           ...state.room,
           walls: [],
+        },
+      }
+    case 'SET_DEFAULT_CEILING_HEIGHT':
+      return {
+        ...state,
+        room: { ...state.room, defaultCeilingHeight: action.payload },
+      }
+    case 'ADD_CEILING_ZONE':
+      return {
+        ...state,
+        room: {
+          ...state.room,
+          ceilingZones: [...state.room.ceilingZones, action.payload],
+        },
+      }
+    case 'REMOVE_CEILING_ZONE':
+      return {
+        ...state,
+        room: {
+          ...state.room,
+          ceilingZones: state.room.ceilingZones.filter((z) => z.id !== action.payload.id),
+        },
+      }
+    case 'CLEAR_CEILING_ZONES':
+      return {
+        ...state,
+        room: {
+          ...state.room,
+          ceilingZones: [],
         },
       }
     default:

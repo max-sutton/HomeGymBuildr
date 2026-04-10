@@ -30,4 +30,26 @@
   overflow: auto;
   padding: 20px;
   background: var(--bg-primary);
+  position: relative;
+}
+
+.view-toggle {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 20;
+  padding: 6px 16px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.view-toggle:hover {
+  background: var(--bg-surface);
+  border-color: var(--accent-strength);
 }

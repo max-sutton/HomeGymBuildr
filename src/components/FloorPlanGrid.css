@@ -164,3 +164,28 @@
   border-radius: 3px;
   white-space: nowrap;
 }
+
+/* Ceiling mode */
+.floor-plan-grid.ceiling-mode {
+  cursor: crosshair;
+}
+
+.ceiling-zone-overlay {
+  position: absolute;
+  background: rgba(155, 89, 182, 0.15);
+  border: 1px dashed rgba(155, 89, 182, 0.5);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.ceiling-zone-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #c084fc;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 1px 5px;
+  border-radius: 3px;
+}

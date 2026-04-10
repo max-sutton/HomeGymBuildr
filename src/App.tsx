@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, lazy, Suspense } from 'react'
 import { useGymLayout } from './hooks/useGymLayout'
 import { useDragAndDrop } from './hooks/useDragAndDrop'
 import RoomSetup from './components/RoomSetup'
@@ -6,6 +6,8 @@ import EquipmentCatalog from './components/EquipmentCatalog'
 import FloorPlanGrid from './components/FloorPlanGrid'
 import BudgetSummary from './components/BudgetSummary'
 import DrawToolbar from './components/DrawToolbar'
+import CeilingSetup from './components/CeilingSetup'
+const GymScene3D = lazy(() => import('./components/GymScene3D'))
 import './App.css'
 
 function App() {
@@ -13,11 +15,15 @@ function App() {
   const [isDrawMode, setIsDrawMode] = useState(false)
   const [isEraseMode, setIsEraseMode] = useState(false)
   const [isWallMode, setIsWallMode] = useState(false)
+  const [isCeilingDrawMode, setIsCeilingDrawMode] = useState(false)
+  const [ceilingZoneHeight, setCeilingZoneHeight] = useState(7)
+  const [view3D, setView3D] = useState(false)
 
-  const activateMode = (mode: 'draw' | 'erase' | 'wall') => {
+  const activateMode = (mode: 'draw' | 'erase' | 'wall' | 'ceiling') => {
     setIsDrawMode((d) => mode === 'draw' ? !d : false)
     setIsEraseMode((d) => mode === 'erase' ? !d : false)
     setIsWallMode((d) => mode === 'wall' ? !d : false)
+    setIsCeilingDrawMode((d) => mode === 'ceiling' ? !d : false)
   }
   const [sidebarDragOver, setSidebarDragOver] = useState(false)
   const { handleDragOver: baseDragOver, parseDrop } = useDragAndDrop()
@@ -62,11 +68,36 @@ function App() {
           onClearRegions={() => dispatch({ type: 'CLEAR_FLOOR_REGIONS' })}
           onClearWalls={() => dispatch({ type: 'CLEAR_WALLS' })}
         />
+        <CeilingSetup
+          state={state}
+          dispatch={dispatch}
+          isCeilingDrawMode={isCeilingDrawMode}
+          onToggleCeilingDraw={() => activateMode('ceiling')}
+          ceilingZoneHeight={ceilingZoneHeight}
+          onCeilingZoneHeightChange={setCeilingZoneHeight}
+        />
         <EquipmentCatalog state={state} dispatch={dispatch} />
       </aside>
 
       <main className="main-area">
-        <FloorPlanGrid state={state} dispatch={dispatch} isDrawMode={isDrawMode} isEraseMode={isEraseMode} isWallMode={isWallMode} />
+        <button className="view-toggle" onClick={() => setView3D((v) => !v)}>
+          {view3D ? '2D Plan' : '3D View'}
+        </button>
+        {view3D ? (
+          <Suspense fallback={<div style={{ color: '#aaa', textAlign: 'center', paddingTop: 80 }}>Loading 3D view...</div>}>
+            <GymScene3D state={state} />
+          </Suspense>
+        ) : (
+          <FloorPlanGrid
+            state={state}
+            dispatch={dispatch}
+            isDrawMode={isDrawMode}
+            isEraseMode={isEraseMode}
+            isWallMode={isWallMode}
+            isCeilingDrawMode={isCeilingDrawMode}
+            ceilingZoneHeight={ceilingZoneHeight}
+          />
+        )}
       </main>
 
       <aside className="sidebar sidebar-right">

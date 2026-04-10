@@ -75,3 +75,9 @@
   text-align: center;
   padding: 20px 10px;
 }
+
+.ceiling-warn-icon {
+  color: #e74c3c;
+  font-weight: 700;
+  cursor: help;
+}

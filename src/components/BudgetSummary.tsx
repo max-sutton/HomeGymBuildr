@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { equipmentCatalog } from '../data/equipmentCatalog'
 import { CATEGORY_COLORS } from '../types'
+import { checkEquipmentFitsCeiling } from '../utils/ceilingCheck'
 import type { GymLayoutState, GymLayoutDispatch } from '../hooks/useGymLayout'
 import './BudgetSummary.css'
 
@@ -48,7 +49,12 @@ export default function BudgetSummary({ state, dispatch: _dispatch }: Props) {
               className="placed-dot"
               style={{ backgroundColor: CATEGORY_COLORS[item.equipment.category] }}
             />
-            <span className="placed-name">{item.equipment.name}</span>
+            <span className="placed-name">
+              {item.equipment.name}
+              {!checkEquipmentFitsCeiling(item, item.equipment, room).fits && (
+                <span className="ceiling-warn-icon" title="Exceeds ceiling height"> !</span>
+              )}
+            </span>
             <span className="placed-price">${item.equipment.price}</span>
           </li>
         ))}

@@ -1,0 +1,66 @@
+.ceiling-setup {
+  padding: 16px;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ceiling-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ceiling-field label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.ceiling-field input {
+  width: 64px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: center;
+}
+
+.ceiling-draw-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.ceiling-toggle.active {
+  background: rgba(155, 89, 182, 0.15);
+  border-color: #9b59b6;
+  color: #c084fc;
+}
+
+.zone-height-input {
+  width: 56px;
+  padding: 8px 6px;
+  border-radius: 6px;
+  background: var(--bg-primary);
+  border: 1px solid #9b59b6;
+  color: #c084fc;
+  font-size: 13px;
+  text-align: center;
+}
+
+.ceiling-hint {
+  color: #c084fc;
+}
+
+.ceiling-zone-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 2px 0;
+}

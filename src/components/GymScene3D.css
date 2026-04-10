@@ -1,0 +1,36 @@
+.gym-scene-3d {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.gym-scene-3d canvas {
+  border-radius: 8px;
+}
+
+.scene-controls {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  gap: 6px;
+}
+
+.scene-controls button {
+  padding: 5px 14px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 500;
+  background: rgba(30, 30, 50, 0.85);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: background 0.15s;
+}
+
+.scene-controls button:hover {
+  background: rgba(50, 50, 80, 0.9);
+}

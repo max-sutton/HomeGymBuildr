@@ -8,6 +8,8 @@ export interface Equipment {
   width: number
   /** Depth in feet */
   depth: number
+  /** Height in feet */
+  height: number
   /** Required clearance around the equipment in feet */
   clearance: number
   /** Estimated price in USD */
@@ -48,11 +50,28 @@ export interface Wall {
   orientation: 'horizontal' | 'vertical'
 }
 
+export interface CeilingZone {
+  /** Unique identifier */
+  id: string
+  /** Grid X position (feet from left) */
+  x: number
+  /** Grid Y position (feet from top) */
+  y: number
+  /** Zone width in feet */
+  width: number
+  /** Zone depth in feet */
+  depth: number
+  /** Ceiling clearance in feet at this zone */
+  ceilingHeight: number
+}
+
 export interface GymRoom {
   /** Room width in feet */
   width: number
   /** Room depth in feet */
   depth: number
+  /** Default ceiling height in feet */
+  defaultCeilingHeight: number
   /** Budget target in USD */
   budget: number
   /** Equipment placed in the room */
@@ -61,6 +80,8 @@ export interface GymRoom {
   floorRegions: FloorRegion[]
   /** Interior walls drawn by the user */
   walls: Wall[]
+  /** Ceiling zones with varying heights */
+  ceilingZones: CeilingZone[]
 }
 
 export const CATEGORY_COLORS: Record<EquipmentCategory, string> = {

@@ -13,6 +13,8 @@ interface Props {
   isDrawMode: boolean
   isEraseMode: boolean
   isWallMode: boolean
+  isCeilingDrawMode: boolean
+  ceilingZoneHeight: number
 }
 
 const MAX_GRID_PX = 700
@@ -25,7 +27,7 @@ interface DrawPreview {
   endY: number
 }
 
-export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode, isWallMode }: Props) {
+export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode, isWallMode, isCeilingDrawMode, ceilingZoneHeight }: Props) {
   const { room } = state
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const { handleDragOver: baseDragOver, parseDrop } = useDragAndDrop()
@@ -118,13 +120,13 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
   // --- Mouse handlers for draw mode ---
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      if (!isDrawMode) return
+      if (!isDrawMode && !isCeilingDrawMode) return
       e.preventDefault()
       const { gx, gy } = toGridCoords(e.clientX, e.clientY)
       isDrawing.current = true
       setDrawPreview({ startX: gx, startY: gy, endX: gx, endY: gy })
     },
-    [isDrawMode, toGridCoords]
+    [isDrawMode, isCeilingDrawMode, toGridCoords]
   )
 
   const handleMouseMove = useCallback(
@@ -140,12 +142,26 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
     if (!isDrawing.current || !drawPreview) return
     isDrawing.current = false
     const rect = previewToRect(drawPreview)
-    dispatch({
-      type: 'ADD_FLOOR_REGION',
-      payload: { id: `region-${Date.now()}`, ...rect },
-    })
+    if (isCeilingDrawMode) {
+      dispatch({
+        type: 'ADD_CEILING_ZONE',
+        payload: {
+          id: `ceiling-${Date.now()}`,
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          depth: rect.height,
+          ceilingHeight: ceilingZoneHeight,
+        },
+      })
+    } else {
+      dispatch({
+        type: 'ADD_FLOOR_REGION',
+        payload: { id: `region-${Date.now()}`, ...rect },
+      })
+    }
     setDrawPreview(null)
-  }, [drawPreview, dispatch])
+  }, [drawPreview, dispatch, isCeilingDrawMode, ceilingZoneHeight])
 
   useEffect(() => {
     const handler = () => {
@@ -312,7 +328,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
   }, [selectedId, dispatch])
 
   const previewRect = drawPreview ? previewToRect(drawPreview) : null
-  const gridModeClass = isDrawMode ? 'draw-mode' : isEraseMode ? 'erase-mode' : isWallMode ? 'wall-mode' : ''
+  const gridModeClass = isDrawMode ? 'draw-mode' : isEraseMode ? 'erase-mode' : isWallMode ? 'wall-mode' : isCeilingDrawMode ? 'ceiling-mode' : ''
 
   return (
     <div className="floor-plan-wrapper">
@@ -328,7 +344,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
           height: gridHeight,
           backgroundSize: `${cellSize}px ${cellSize}px`,
         }}
-        onDragOver={(isDrawMode || isWallMode) ? undefined : handleDragOver}
+        onDragOver={(isDrawMode || isWallMode || isCeilingDrawMode) ? undefined : handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onClick={(e) => {
@@ -445,6 +461,22 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
           )
         })()}
 
+        {/* Ceiling zone overlays */}
+        {room.ceilingZones.map((zone) => (
+          <div
+            key={zone.id}
+            className="ceiling-zone-overlay"
+            style={{
+              left: zone.x * cellSize,
+              top: zone.y * cellSize,
+              width: zone.width * cellSize,
+              height: zone.depth * cellSize,
+            }}
+          >
+            <span className="ceiling-zone-label">{zone.ceilingHeight}ft</span>
+          </div>
+        ))}
+
         {/* Equipment blocks */}
         {room.placedEquipment.map((placed) => (
           <EquipmentBlock
@@ -454,6 +486,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
             dispatch={dispatch}
             selected={selectedId === placed.instanceId}
             onSelect={setSelectedId}
+            room={room}
           />
         ))}
       </div>
