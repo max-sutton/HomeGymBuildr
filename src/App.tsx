@@ -15,14 +15,17 @@ function App() {
   const [isDrawMode, setIsDrawMode] = useState(false)
   const [isEraseMode, setIsEraseMode] = useState(false)
   const [isWallMode, setIsWallMode] = useState(false)
+  const [isDoorMode, setIsDoorMode] = useState(false)
+  const [doorWidth, setDoorWidth] = useState(3)
   const [isCeilingDrawMode, setIsCeilingDrawMode] = useState(false)
   const [ceilingZoneHeight, setCeilingZoneHeight] = useState(7)
   const [view3D, setView3D] = useState(false)
 
-  const activateMode = (mode: 'draw' | 'erase' | 'wall' | 'ceiling') => {
+  const activateMode = (mode: 'draw' | 'erase' | 'wall' | 'door' | 'ceiling') => {
     setIsDrawMode((d) => mode === 'draw' ? !d : false)
     setIsEraseMode((d) => mode === 'erase' ? !d : false)
     setIsWallMode((d) => mode === 'wall' ? !d : false)
+    setIsDoorMode((d) => mode === 'door' ? !d : false)
     setIsCeilingDrawMode((d) => mode === 'ceiling' ? !d : false)
   }
   const [sidebarDragOver, setSidebarDragOver] = useState(false)
@@ -60,13 +63,19 @@ function App() {
           isDrawMode={isDrawMode}
           isEraseMode={isEraseMode}
           isWallMode={isWallMode}
+          isDoorMode={isDoorMode}
           onToggleDrawMode={() => activateMode('draw')}
           onToggleEraseMode={() => activateMode('erase')}
           onToggleWallMode={() => activateMode('wall')}
+          onToggleDoorMode={() => activateMode('door')}
           regionCount={state.room.floorRegions.length}
           wallCount={state.room.walls.length}
+          doorCount={state.room.doors.length}
+          doorWidth={doorWidth}
+          onDoorWidthChange={setDoorWidth}
           onClearRegions={() => dispatch({ type: 'CLEAR_FLOOR_REGIONS' })}
           onClearWalls={() => dispatch({ type: 'CLEAR_WALLS' })}
+          onClearDoors={() => dispatch({ type: 'CLEAR_DOORS' })}
         />
         <CeilingSetup
           state={state}
@@ -94,6 +103,8 @@ function App() {
             isDrawMode={isDrawMode}
             isEraseMode={isEraseMode}
             isWallMode={isWallMode}
+            isDoorMode={isDoorMode}
+            doorWidth={doorWidth}
             isCeilingDrawMode={isCeilingDrawMode}
             ceilingZoneHeight={ceilingZoneHeight}
           />

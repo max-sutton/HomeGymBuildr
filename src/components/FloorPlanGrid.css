@@ -30,6 +30,7 @@
 }
 
 .floor-plan-grid.erase-mode {
+  cursor: crosshair;
   border-color: var(--danger);
 }
 
@@ -38,17 +39,17 @@
   border-color: #e6b43c;
 }
 
+.floor-plan-grid.door-mode {
+  cursor: crosshair;
+  border-color: #64c8b4;
+}
+
 /* Floor region overlay system */
 .floor-overlay {
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 0;
-}
-
-.floor-overlay.erase-mode {
-  pointer-events: auto;
-  z-index: 20;
 }
 
 .floor-dim {
@@ -65,16 +66,6 @@
   background: #12122a;
   border: none;
   transition: background 0.15s;
-}
-
-.floor-region.erasable {
-  cursor: pointer;
-  border: 1px dashed transparent;
-}
-
-.floor-region.erasable:hover {
-  background: rgba(231, 76, 60, 0.2);
-  border-color: var(--danger);
 }
 
 /* Perimeter edges — thin border on the outer edge of the combined floor shape */
@@ -165,6 +156,16 @@
   white-space: nowrap;
 }
 
+/* Erase preview */
+.draw-preview.erase-preview {
+  background: rgba(231, 76, 60, 0.2);
+  border-color: var(--danger);
+}
+
+.erase-preview .draw-preview-label {
+  color: #f07060;
+}
+
 /* Ceiling mode */
 .floor-plan-grid.ceiling-mode {
   cursor: crosshair;
@@ -179,6 +180,22 @@
   align-items: center;
   justify-content: center;
   pointer-events: none;
+}
+
+/* Doors */
+.door-icon {
+  z-index: 4;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.door-icon.interactive {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.door-icon.interactive:hover path {
+  stroke: var(--danger);
 }
 
 .ceiling-zone-label {

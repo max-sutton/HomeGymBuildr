@@ -50,6 +50,19 @@ export interface Wall {
   orientation: 'horizontal' | 'vertical'
 }
 
+export interface Door {
+  /** Unique identifier */
+  id: string
+  /** Which perimeter wall the door is on */
+  wall: 'top' | 'bottom' | 'left' | 'right'
+  /** Position along the wall in feet (from left for top/bottom walls, from top for left/right walls) */
+  position: number
+  /** Door width in feet */
+  width: number
+  /** Which side the hinge is on when looking at the wall from inside the room */
+  hingeSide: 'left' | 'right'
+}
+
 export interface CeilingZone {
   /** Unique identifier */
   id: string
@@ -82,6 +95,8 @@ export interface GymRoom {
   walls: Wall[]
   /** Ceiling zones with varying heights */
   ceilingZones: CeilingZone[]
+  /** Doors placed on perimeter walls */
+  doors: Door[]
 }
 
 export const CATEGORY_COLORS: Record<EquipmentCategory, string> = {

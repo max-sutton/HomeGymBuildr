@@ -7,7 +7,8 @@
 }
 
 .draw-buttons {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 6px;
 }
 
@@ -15,7 +16,6 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1;
   padding: 8px 12px;
   border-radius: 6px;
   font-size: 13px;
@@ -90,4 +90,42 @@
 
 .clear-btn:hover {
   background: rgba(231, 76, 60, 0.15);
+}
+
+.door-toggle.active {
+  background: rgba(100, 200, 180, 0.15);
+  border-color: #64c8b4;
+  color: #7edcc8;
+}
+
+.door-hint {
+  color: #7edcc8;
+}
+
+.door-width-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.door-width-input label {
+  flex-shrink: 0;
+}
+
+.door-width-input input {
+  width: 60px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  text-align: center;
+}
+
+.door-width-input span {
+  flex-shrink: 0;
+  color: var(--text-secondary);
 }

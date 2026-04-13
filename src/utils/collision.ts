@@ -1,4 +1,4 @@
-import type { PlacedEquipment, Equipment, GymRoom, FloorRegion, Wall } from '../types'
+import type { PlacedEquipment, Equipment, GymRoom, FloorRegion, Wall, Door } from '../types'
 import { equipmentCatalog } from '../data/equipmentCatalog'
 
 function getEquipment(id: string): Equipment | undefined {
@@ -111,6 +111,29 @@ function wallCutsRect(rect: Rect, walls: Wall[]): boolean {
   return false
 }
 
+/** Get the obstruction rectangle for a door (the swing area extending into the room) */
+export function getDoorObstructionRect(door: Door, room: GymRoom): Rect {
+  const w = door.width
+  if (door.wall === 'top') {
+    return { x: door.position, y: 0, width: w, height: w }
+  } else if (door.wall === 'bottom') {
+    return { x: door.position, y: room.depth - w, width: w, height: w }
+  } else if (door.wall === 'left') {
+    return { x: 0, y: door.position, width: w, height: w }
+  } else {
+    return { x: room.width - w, y: door.position, width: w, height: w }
+  }
+}
+
+/** Check if a rect overlaps with any door obstruction zones */
+function doorBlocksRect(rect: Rect, doors: Door[], room: GymRoom): boolean {
+  for (const door of doors) {
+    const doorRect = getDoorObstructionRect(door, room)
+    if (rectsOverlap(rect, doorRect)) return true
+  }
+  return false
+}
+
 /** Check if an item fits entirely within the room bounds */
 export function isWithinBounds(item: PlacedEquipment, room: GymRoom): boolean {
   const eq = getEquipment(item.equipmentId)
@@ -131,6 +154,11 @@ export function isWithinBounds(item: PlacedEquipment, room: GymRoom): boolean {
   // Equipment cannot span across a wall
   if (room.walls.length > 0) {
     if (wallCutsRect(rect, room.walls)) return false
+  }
+
+  // Equipment cannot overlap with door swing areas
+  if (room.doors && room.doors.length > 0) {
+    if (doorBlocksRect(rect, room.doors, room)) return false
   }
 
   return true
