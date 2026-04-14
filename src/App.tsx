@@ -28,6 +28,14 @@ function App() {
     setIsDoorMode((d) => mode === 'door' ? !d : false)
     setIsCeilingDrawMode((d) => mode === 'ceiling' ? !d : false)
   }
+
+  const clearDrawModes = useCallback(() => {
+    setIsDrawMode(false)
+    setIsEraseMode(false)
+    setIsWallMode(false)
+    setIsDoorMode(false)
+    setIsCeilingDrawMode(false)
+  }, [])
   const [sidebarDragOver, setSidebarDragOver] = useState(false)
   const { handleDragOver: baseDragOver, parseDrop } = useDragAndDrop()
 
@@ -107,6 +115,7 @@ function App() {
             doorWidth={doorWidth}
             isCeilingDrawMode={isCeilingDrawMode}
             ceilingZoneHeight={ceilingZoneHeight}
+            onClearDrawModes={clearDrawModes}
           />
         )}
       </main>

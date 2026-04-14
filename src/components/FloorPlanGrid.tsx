@@ -17,6 +17,7 @@ interface Props {
   doorWidth: number
   isCeilingDrawMode: boolean
   ceilingZoneHeight: number
+  onClearDrawModes: () => void
 }
 
 const MAX_GRID_PX = 700
@@ -29,7 +30,7 @@ interface DrawPreview {
   endY: number
 }
 
-export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode, isWallMode, isDoorMode, doorWidth, isCeilingDrawMode, ceilingZoneHeight }: Props) {
+export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode, isWallMode, isDoorMode, doorWidth, isCeilingDrawMode, ceilingZoneHeight, onClearDrawModes }: Props) {
   const { room } = state
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const { handleDragOver: baseDragOver, parseDrop } = useDragAndDrop()
@@ -42,12 +43,17 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
 
   // Wall drag state
   const wallDragStart = useRef<{
-    orientation: 'horizontal' | 'vertical'
-    wallCoord: number  // the fixed grid line (y for horizontal, x for vertical)
-    startSeg: number   // starting segment index along the line
+    fx: number  // fractional x at mouseDown
+    fy: number  // fractional y at mouseDown
   } | null>(null)
   const wallDragMoved = useRef(false)
   const [wallDragPreview, setWallDragPreview] = useState<{ x: number; y: number; orientation: 'horizontal' | 'vertical' }[]>([])
+  const wallDragPreviewRef = useRef<typeof wallDragPreview>([])
+
+  // Keep ref in sync with state so mouseUp handler always sees latest preview
+  useEffect(() => {
+    wallDragPreviewRef.current = wallDragPreview
+  }, [wallDragPreview])
 
   // Equipment drag preview state
   const [dragPreview, setDragPreview] = useState<{
@@ -137,33 +143,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
       if (isWallMode) {
         e.preventDefault()
         const { fx, fy } = toFractionalGrid(e.clientX, e.clientY)
-        const nearestHY = Math.round(fy)
-        const nearestVX = Math.round(fx)
-        const distH = Math.abs(fy - nearestHY)
-        const distV = Math.abs(fx - nearestVX)
-
-        let orientation: 'horizontal' | 'vertical'
-        let wallCoord: number
-        let startSeg: number
-
-        if (distH < distV) {
-          orientation = 'horizontal'
-          wallCoord = nearestHY
-          startSeg = Math.floor(fx)
-        } else {
-          orientation = 'vertical'
-          wallCoord = nearestVX
-          startSeg = Math.floor(fy)
-        }
-
-        // Validate interior wall position
-        if (orientation === 'horizontal') {
-          if (wallCoord <= 0 || wallCoord >= room.depth) return
-        } else {
-          if (wallCoord <= 0 || wallCoord >= room.width) return
-        }
-
-        wallDragStart.current = { orientation, wallCoord, startSeg }
+        wallDragStart.current = { fx, fy }
         wallDragMoved.current = false
         isDrawing.current = true
         return
@@ -184,14 +164,56 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
     (e: React.MouseEvent) => {
       if (!isDrawing.current) return
       if (wallDragStart.current) {
-        // Wall drag mode — compute preview segments along the locked orientation
+        // Wall drag mode — dynamically pick orientation based on drag direction
         const { fx, fy } = toFractionalGrid(e.clientX, e.clientY)
-        const { orientation, wallCoord, startSeg } = wallDragStart.current
-        const currentSeg = orientation === 'horizontal' ? Math.floor(fx) : Math.floor(fy)
-        const maxSeg = orientation === 'horizontal' ? room.width - 1 : room.depth - 1
+        const { fx: startFx, fy: startFy } = wallDragStart.current
+        const dx = Math.abs(fx - startFx)
+        const dy = Math.abs(fy - startFy)
+
+        // Determine orientation: horizontal drag = horizontal wall, vertical drag = vertical wall
+        // Fall back to nearest-grid-line detection when no significant movement yet
+        let orientation: 'horizontal' | 'vertical'
+        let wallCoord: number
+        let startSeg: number
+        let currentSeg: number
+
+        if (dx > 0.3 || dy > 0.3) {
+          // Enough movement to determine direction from drag
+          if (dx >= dy) {
+            orientation = 'horizontal'
+            wallCoord = Math.round(startFy)
+            startSeg = Math.floor(startFx)
+            currentSeg = Math.floor(fx)
+          } else {
+            orientation = 'vertical'
+            wallCoord = Math.round(startFx)
+            startSeg = Math.floor(startFy)
+            currentSeg = Math.floor(fy)
+          }
+        } else {
+          // Barely moved — use nearest grid line from start position
+          const distH = Math.abs(startFy - Math.round(startFy))
+          const distV = Math.abs(startFx - Math.round(startFx))
+          if (distH < distV) {
+            orientation = 'horizontal'
+            wallCoord = Math.round(startFy)
+            startSeg = Math.floor(startFx)
+            currentSeg = Math.floor(fx)
+          } else {
+            orientation = 'vertical'
+            wallCoord = Math.round(startFx)
+            startSeg = Math.floor(startFy)
+            currentSeg = Math.floor(fy)
+          }
+        }
+
+        // Validate interior wall
+        if (orientation === 'horizontal' && (wallCoord <= 0 || wallCoord >= room.depth)) { setWallDragPreview([]); return }
+        if (orientation === 'vertical' && (wallCoord <= 0 || wallCoord >= room.width)) { setWallDragPreview([]); return }
 
         if (currentSeg !== startSeg) wallDragMoved.current = true
 
+        const maxSeg = orientation === 'horizontal' ? room.width - 1 : room.depth - 1
         const from = Math.max(0, Math.min(startSeg, currentSeg))
         const to = Math.min(maxSeg, Math.max(startSeg, currentSeg))
         const segments: { x: number; y: number; orientation: 'horizontal' | 'vertical' }[] = []
@@ -218,9 +240,10 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
     // Wall drag release
     if (wallDragStart.current) {
       isDrawing.current = false
-      if (wallDragMoved.current && wallDragPreview.length > 0) {
+      const preview = wallDragPreviewRef.current
+      if (wallDragMoved.current && preview.length > 0) {
         // Dragged — place all wall segments
-        const walls = wallDragPreview.map((seg) => ({
+        const walls = preview.map((seg) => ({
           id: `wall-${seg.x}-${seg.y}-${seg.orientation}`,
           x: seg.x,
           y: seg.y,
@@ -530,7 +553,12 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
           height: gridHeight,
           backgroundSize: `${cellSize}px ${cellSize}px`,
         }}
-        onDragOver={(isDrawMode || isWallMode || isDoorMode || isCeilingDrawMode) ? undefined : handleDragOver}
+        onDragOver={(e: React.DragEvent) => {
+          if (isDrawMode || isEraseMode || isWallMode || isDoorMode || isCeilingDrawMode) {
+            onClearDrawModes()
+          }
+          handleDragOver(e)
+        }}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onClick={(e) => {
@@ -607,6 +635,25 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
               e.stopPropagation()
               dispatch({ type: 'TOGGLE_WALL', payload: wall })
             } : undefined}
+          />
+        ))}
+
+        {/* Wall drag preview */}
+        {wallDragPreview.map((seg, i) => (
+          <div
+            key={`wall-preview-${i}`}
+            className={`wall-segment ${seg.orientation} wall-drag-preview`}
+            style={seg.orientation === 'horizontal' ? {
+              left: seg.x * cellSize,
+              top: seg.y * cellSize - 2,
+              width: cellSize,
+              height: 4,
+            } : {
+              left: seg.x * cellSize - 2,
+              top: seg.y * cellSize,
+              width: 4,
+              height: cellSize,
+            }}
           />
         ))}
 
