@@ -1,4 +1,5 @@
-import { useState, useCallback, lazy, Suspense } from 'react'
+import { useState, useCallback, useEffect, lazy, Suspense } from 'react'
+import { SNAP_COARSE, SNAP_FINE, nextSnapLevel, snapLabel } from './utils/snap'
 import { useGymLayout } from './hooks/useGymLayout'
 import { useDragAndDrop } from './hooks/useDragAndDrop'
 import RoomSetup from './components/RoomSetup'
@@ -20,6 +21,17 @@ function App() {
   const [isCeilingDrawMode, setIsCeilingDrawMode] = useState(false)
   const [ceilingZoneHeight, setCeilingZoneHeight] = useState(7)
   const [view3D, setView3D] = useState(false)
+  const [snapLevel, setSnapLevel] = useState(SNAP_COARSE)
+  const [shiftHeld, setShiftHeld] = useState(false)
+  const snapIncrement = shiftHeld ? (snapLevel === SNAP_COARSE ? SNAP_FINE : SNAP_COARSE) : snapLevel
+
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { if (e.key === 'Shift') setShiftHeld(true) }
+    const up = (e: KeyboardEvent) => { if (e.key === 'Shift') setShiftHeld(false) }
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up) }
+  }, [])
 
   const activateMode = (mode: 'draw' | 'erase' | 'wall' | 'door' | 'ceiling') => {
     setIsDrawMode((d) => mode === 'draw' ? !d : false)
@@ -84,6 +96,9 @@ function App() {
           onClearRegions={() => dispatch({ type: 'CLEAR_FLOOR_REGIONS' })}
           onClearWalls={() => dispatch({ type: 'CLEAR_WALLS' })}
           onClearDoors={() => dispatch({ type: 'CLEAR_DOORS' })}
+          snapLevel={snapLevel}
+          onCycleSnap={() => setSnapLevel((v) => nextSnapLevel(v))}
+          snapIncrement={snapIncrement}
         />
         <CeilingSetup
           state={state}
@@ -116,6 +131,7 @@ function App() {
             isCeilingDrawMode={isCeilingDrawMode}
             ceilingZoneHeight={ceilingZoneHeight}
             onClearDrawModes={clearDrawModes}
+            snapIncrement={snapIncrement}
           />
         )}
       </main>

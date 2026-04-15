@@ -79,11 +79,12 @@ export function checkClearance(
 
 /** Check if a rectangle is fully contained within at least the union of floor regions */
 function isRectOnFloor(rect: Rect, regions: FloorRegion[]): boolean {
-  // For each unit cell the item occupies, check that at least one region covers it
-  for (let cx = rect.x; cx < rect.x + rect.width; cx++) {
-    for (let cy = rect.y; cy < rect.y + rect.height; cy++) {
+  // Check at quarter-foot resolution to handle fine-placed regions
+  const step = 0.25
+  for (let cx = rect.x; cx < rect.x + rect.width - step / 2; cx += step) {
+    for (let cy = rect.y; cy < rect.y + rect.height - step / 2; cy += step) {
       const covered = regions.some(
-        (r) => cx >= r.x && cx < r.x + r.width && cy >= r.y && cy < r.y + r.height
+        (r) => cx >= r.x - 0.001 && cx < r.x + r.width - 0.001 && cy >= r.y - 0.001 && cy < r.y + r.height - 0.001
       )
       if (!covered) return false
     }

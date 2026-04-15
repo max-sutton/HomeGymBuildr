@@ -3,6 +3,7 @@ import type { GymLayoutState, GymLayoutDispatch } from '../hooks/useGymLayout'
 import { useDragAndDrop, getActiveDragData } from '../hooks/useDragAndDrop'
 import { equipmentCatalog } from '../data/equipmentCatalog'
 import { CATEGORY_COLORS } from '../types'
+import { snapToGrid, snapFloor, formatDimension, SNAP_FINE, coordKey } from '../utils/snap'
 import { checkOverlap, isWithinBounds, getEffectiveDimensions } from '../utils/collision'
 import EquipmentBlock from './EquipmentBlock'
 import './FloorPlanGrid.css'
@@ -18,6 +19,7 @@ interface Props {
   isCeilingDrawMode: boolean
   ceilingZoneHeight: number
   onClearDrawModes: () => void
+  snapIncrement: number
 }
 
 const MAX_GRID_PX = 700
@@ -30,13 +32,15 @@ interface DrawPreview {
   endY: number
 }
 
-export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode, isWallMode, isDoorMode, doorWidth, isCeilingDrawMode, ceilingZoneHeight, onClearDrawModes }: Props) {
+export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode, isWallMode, isDoorMode, doorWidth, isCeilingDrawMode, ceilingZoneHeight, onClearDrawModes, snapIncrement }: Props) {
   const { room } = state
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const { handleDragOver: baseDragOver, parseDrop } = useDragAndDrop()
   const gridRef = useRef<HTMLDivElement>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
   const [drawPreview, setDrawPreview] = useState<DrawPreview | null>(null)
   const isDrawing = useRef(false)
+  const [zoom, setZoom] = useState(1)
 
   // Store fractional mouse position for single-click wall detection in erase mode
   const eraseClickFractional = useRef<{ fx: number; fy: number } | null>(null)
@@ -61,10 +65,11 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
     equipmentId: string; valid: boolean
   } | null>(null)
 
-  const cellSize = Math.max(
+  const baseCellSize = Math.max(
     MIN_CELL_SIZE,
     Math.min(Math.floor(MAX_GRID_PX / room.width), Math.floor(MAX_GRID_PX / room.depth))
   )
+  const cellSize = baseCellSize * zoom
 
   const gridWidth = room.width * cellSize
   const gridHeight = room.depth * cellSize
@@ -73,14 +78,14 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
     (clientX: number, clientY: number) => {
       if (!gridRef.current) return { gx: 0, gy: 0 }
       const rect = gridRef.current.getBoundingClientRect()
-      const gx = Math.floor((clientX - rect.left) / cellSize)
-      const gy = Math.floor((clientY - rect.top) / cellSize)
+      const gx = snapFloor((clientX - rect.left) / cellSize, snapIncrement)
+      const gy = snapFloor((clientY - rect.top) / cellSize, snapIncrement)
       return {
-        gx: Math.max(0, Math.min(gx, room.width - 1)),
-        gy: Math.max(0, Math.min(gy, room.depth - 1)),
+        gx: Math.max(0, Math.min(gx, room.width - snapIncrement)),
+        gy: Math.max(0, Math.min(gy, room.depth - snapIncrement)),
       }
     },
-    [cellSize, room.width, room.depth]
+    [cellSize, room.width, room.depth, snapIncrement]
   )
 
   // Fractional grid position for wall edge detection
@@ -99,8 +104,8 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
   function previewToRect(preview: DrawPreview) {
     const x = Math.min(preview.startX, preview.endX)
     const y = Math.min(preview.startY, preview.endY)
-    const w = Math.abs(preview.endX - preview.startX) + 1
-    const h = Math.abs(preview.endY - preview.startY) + 1
+    const w = Math.abs(preview.endX - preview.startX) + snapIncrement
+    const h = Math.abs(preview.endY - preview.startY) + snapIncrement
     return { x, y, width: w, height: h }
   }
 
@@ -110,10 +115,11 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
     const cells = new Set<string>()
     if (!hasFloorRegions) return { floorCells: cells, perimeterEdges: [] as { x: number; y: number; orientation: 'horizontal' | 'vertical' }[] }
 
+    const step = SNAP_FINE
     for (const region of room.floorRegions) {
-      for (let x = region.x; x < region.x + region.width; x++) {
-        for (let y = region.y; y < region.y + region.height; y++) {
-          cells.add(`${x},${y}`)
+      for (let x = region.x; x < region.x + region.width - step / 2; x += step) {
+        for (let y = region.y; y < region.y + region.height - step / 2; y += step) {
+          cells.add(coordKey(x, y))
         }
       }
     }
@@ -123,19 +129,19 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
     for (const key of cells) {
       const [cx, cy] = key.split(',').map(Number)
       // Top edge
-      if (!cells.has(`${cx},${cy - 1}`)) edges.push({ x: cx, y: cy, orientation: 'horizontal' })
+      if (!cells.has(coordKey(cx, cy - step))) edges.push({ x: cx, y: cy, orientation: 'horizontal' })
       // Bottom edge
-      if (!cells.has(`${cx},${cy + 1}`)) edges.push({ x: cx, y: cy + 1, orientation: 'horizontal' })
+      if (!cells.has(coordKey(cx, cy + step))) edges.push({ x: cx, y: cy + step, orientation: 'horizontal' })
       // Left edge
-      if (!cells.has(`${cx - 1},${cy}`)) edges.push({ x: cx, y: cy, orientation: 'vertical' })
+      if (!cells.has(coordKey(cx - step, cy))) edges.push({ x: cx, y: cy, orientation: 'vertical' })
       // Right edge
-      if (!cells.has(`${cx + 1},${cy}`)) edges.push({ x: cx + 1, y: cy, orientation: 'vertical' })
+      if (!cells.has(coordKey(cx + step, cy))) edges.push({ x: cx + step, y: cy, orientation: 'vertical' })
     }
 
     return { floorCells: cells, perimeterEdges: edges }
   }, [room.floorRegions, hasFloorRegions])
 
-  const floorArea = hasFloorRegions ? floorCells.size : room.width * room.depth
+  const floorArea = hasFloorRegions ? floorCells.size * SNAP_FINE * SNAP_FINE : room.width * room.depth
 
   // --- Mouse handlers for draw/erase/wall-drag mode ---
   const handleMouseDown = useCallback(
@@ -181,27 +187,27 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
           // Enough movement to determine direction from drag
           if (dx >= dy) {
             orientation = 'horizontal'
-            wallCoord = Math.round(startFy)
+            wallCoord = snapToGrid(startFy, snapIncrement)
             startSeg = Math.floor(startFx)
             currentSeg = Math.floor(fx)
           } else {
             orientation = 'vertical'
-            wallCoord = Math.round(startFx)
+            wallCoord = snapToGrid(startFx, snapIncrement)
             startSeg = Math.floor(startFy)
             currentSeg = Math.floor(fy)
           }
         } else {
           // Barely moved — use nearest grid line from start position
-          const distH = Math.abs(startFy - Math.round(startFy))
-          const distV = Math.abs(startFx - Math.round(startFx))
+          const distH = Math.abs(startFy - snapToGrid(startFy, snapIncrement))
+          const distV = Math.abs(startFx - snapToGrid(startFx, snapIncrement))
           if (distH < distV) {
             orientation = 'horizontal'
-            wallCoord = Math.round(startFy)
+            wallCoord = snapToGrid(startFy, snapIncrement)
             startSeg = Math.floor(startFx)
             currentSeg = Math.floor(fx)
           } else {
             orientation = 'vertical'
-            wallCoord = Math.round(startFx)
+            wallCoord = snapToGrid(startFx, snapIncrement)
             startSeg = Math.floor(startFy)
             currentSeg = Math.floor(fy)
           }
@@ -231,7 +237,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
       const { gx, gy } = toGridCoords(e.clientX, e.clientY)
       setDrawPreview((prev) => (prev ? { ...prev, endX: gx, endY: gy } : null))
     },
-    [drawPreview, toGridCoords, toFractionalGrid, room.width, room.depth]
+    [drawPreview, toGridCoords, toFractionalGrid, room.width, room.depth, snapIncrement]
   )
 
   const handleMouseUp = useCallback(() => {
@@ -274,11 +280,11 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
       })
     } else if (isEraseMode) {
       dispatch({ type: 'ERASE_FLOOR_AREA', payload: rect })
-      if (rect.width === 1 && rect.height === 1 && eraseClickFractional.current) {
+      if (rect.width <= snapIncrement && rect.height <= snapIncrement && eraseClickFractional.current) {
         // Single cell click — detect nearest wall by proximity
         const { fx, fy } = eraseClickFractional.current
-        const nearestHY = Math.round(fy)
-        const nearestVX = Math.round(fx)
+        const nearestHY = snapToGrid(fy, snapIncrement)
+        const nearestVX = snapToGrid(fx, snapIncrement)
         const distH = Math.abs(fy - nearestHY)
         const distV = Math.abs(fx - nearestVX)
 
@@ -300,13 +306,13 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
 
         if (valid && Math.min(distH, distV) < 0.35) {
           const existing = room.walls.find(
-            (w) => w.x === wallX && w.y === wallY && w.orientation === orientation
+            (w) => w.x.toFixed(2) === wallX.toFixed(2) && w.y.toFixed(2) === wallY.toFixed(2) && w.orientation === orientation
           )
           if (existing) {
             dispatch({ type: 'TOGGLE_WALL', payload: existing })
           }
         }
-      } else if (rect.width > 1 || rect.height > 1) {
+      } else if (rect.width > snapIncrement || rect.height > snapIncrement) {
         // Multi-cell selection — erase all walls within the area
         dispatch({ type: 'ERASE_WALLS_IN_AREA', payload: rect })
       }
@@ -318,7 +324,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
       })
     }
     setDrawPreview(null)
-  }, [drawPreview, dispatch, isEraseMode, isCeilingDrawMode, ceilingZoneHeight])
+  }, [drawPreview, dispatch, isEraseMode, isCeilingDrawMode, ceilingZoneHeight, snapIncrement])
 
   useEffect(() => {
     const handler = () => {
@@ -352,8 +358,8 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         const dims = getEffectiveDimensions(placed, eq)
         const offsetX = data.offsetX ?? 0
         const offsetY = data.offsetY ?? 0
-        x = Math.floor((pixelX - offsetX) / cellSize)
-        y = Math.floor((pixelY - offsetY) / cellSize)
+        x = snapFloor((pixelX - offsetX) / cellSize, snapIncrement)
+        y = snapFloor((pixelY - offsetY) / cellSize, snapIncrement)
         eqWidth = dims.width
         eqDepth = dims.depth
         eqId = placed.equipmentId
@@ -367,8 +373,8 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         if (!eq) return
         const halfW = eq.width / 2
         const halfD = eq.depth / 2
-        x = Math.floor(pixelX / cellSize - halfW + 0.5)
-        y = Math.floor(pixelY / cellSize - halfD + 0.5)
+        x = snapToGrid(pixelX / cellSize - halfW, snapIncrement)
+        y = snapToGrid(pixelY / cellSize - halfD, snapIncrement)
         eqWidth = eq.width
         eqDepth = eq.depth
         eqId = eq.id
@@ -378,7 +384,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         setDragPreview({ x, y, width: eqWidth, height: eqDepth, equipmentId: eqId, valid })
       }
     },
-    [baseDragOver, cellSize, room]
+    [baseDragOver, cellSize, room, snapIncrement]
   )
 
   const handleDragLeave = useCallback(() => {
@@ -393,8 +399,8 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
       const { fx, fy } = toFractionalGrid(e.clientX, e.clientY)
 
       // Distance to nearest horizontal and vertical grid lines
-      const nearestHY = Math.round(fy)
-      const nearestVX = Math.round(fx)
+      const nearestHY = snapToGrid(fy, snapIncrement)
+      const nearestVX = snapToGrid(fx, snapIncrement)
       const distH = Math.abs(fy - nearestHY)
       const distV = Math.abs(fx - nearestVX)
 
@@ -426,7 +432,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         payload: { id: `wall-${wallX}-${wallY}-${orientation}`, x: wallX, y: wallY, orientation },
       })
     },
-    [isWallMode, toFractionalGrid, room.width, room.depth, dispatch]
+    [isWallMode, toFractionalGrid, room.width, room.depth, dispatch, snapIncrement]
   )
 
   // --- Click handler for door mode ---
@@ -451,16 +457,16 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
 
       if (minDist === distTop) {
         wall = 'top'
-        position = Math.floor(fx - doorWidth / 2)
+        position = snapFloor(fx - doorWidth / 2, snapIncrement)
       } else if (minDist === distBottom) {
         wall = 'bottom'
-        position = Math.floor(fx - doorWidth / 2)
+        position = snapFloor(fx - doorWidth / 2, snapIncrement)
       } else if (minDist === distLeft) {
         wall = 'left'
-        position = Math.floor(fy - doorWidth / 2)
+        position = snapFloor(fy - doorWidth / 2, snapIncrement)
       } else {
         wall = 'right'
-        position = Math.floor(fy - doorWidth / 2)
+        position = snapFloor(fy - doorWidth / 2, snapIncrement)
       }
 
       // Clamp position to wall bounds
@@ -478,7 +484,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         },
       })
     },
-    [isDoorMode, toFractionalGrid, room.width, room.depth, doorWidth, dispatch]
+    [isDoorMode, toFractionalGrid, room.width, room.depth, doorWidth, dispatch, snapIncrement]
   )
 
   // --- Drop handler ---
@@ -496,8 +502,8 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
       if (data.instanceId) {
         const offsetX = data.offsetX ?? 0
         const offsetY = data.offsetY ?? 0
-        const x = Math.floor((pixelX - offsetX) / cellSize)
-        const y = Math.floor((pixelY - offsetY) / cellSize)
+        const x = snapFloor((pixelX - offsetX) / cellSize, snapIncrement)
+        const y = snapFloor((pixelY - offsetY) / cellSize, snapIncrement)
         const placed = { ...room.placedEquipment.find((p) => p.instanceId === data.instanceId)!, x, y }
         if (isWithinBounds(placed, room) && !checkOverlap(placed, room.placedEquipment)) {
           dispatch({ type: 'MOVE_EQUIPMENT', payload: { instanceId: data.instanceId, x, y } })
@@ -507,8 +513,8 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         if (!eq) return
         const halfW = eq.width / 2
         const halfD = eq.depth / 2
-        const x = Math.floor(pixelX / cellSize - halfW + 0.5)
-        const y = Math.floor(pixelY / cellSize - halfD + 0.5)
+        const x = snapToGrid(pixelX / cellSize - halfW, snapIncrement)
+        const y = snapToGrid(pixelY / cellSize - halfD, snapIncrement)
         const instanceId = `${data.equipmentId}-${Date.now()}`
         const newPlaced = { instanceId, equipmentId: data.equipmentId, x, y, rotated: false }
         if (isWithinBounds(newPlaced, room) && !checkOverlap(newPlaced, room.placedEquipment)) {
@@ -516,7 +522,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         }
       }
     },
-    [cellSize, dispatch, parseDrop, room, isDrawMode, isWallMode]
+    [cellSize, dispatch, parseDrop, room, isDrawMode, isWallMode, snapIncrement]
   )
 
   // Keyboard shortcuts
@@ -536,22 +542,50 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
     return () => window.removeEventListener('keydown', handler)
   }, [selectedId, dispatch])
 
+  // Ctrl+scroll to zoom
+  const MIN_ZOOM = 0.5
+  const MAX_ZOOM = 4
+  const ZOOM_STEP = 0.15
+  useEffect(() => {
+    const el = viewportRef.current
+    if (!el) return
+    const handler = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return
+      e.preventDefault()
+      setZoom((z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z + (e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP))))
+    }
+    el.addEventListener('wheel', handler, { passive: false })
+    return () => el.removeEventListener('wheel', handler)
+  }, [])
+
   const previewRect = drawPreview ? previewToRect(drawPreview) : null
   const gridModeClass = isDrawMode ? 'draw-mode' : isEraseMode ? 'erase-mode' : isWallMode ? 'wall-mode' : isDoorMode ? 'door-mode' : isCeilingDrawMode ? 'ceiling-mode' : ''
 
   return (
     <div className="floor-plan-wrapper">
-      <div className="grid-dimensions">
-        {room.width} ft &times; {room.depth} ft
-        {hasFloorRegions && <span className="floor-area"> &middot; {floorArea} sq ft floor</span>}
+      <div className="grid-top-bar">
+        <div className="grid-dimensions">
+          {room.width} ft &times; {room.depth} ft
+          {hasFloorRegions && <span className="floor-area"> &middot; {floorArea} sq ft floor</span>}
+        </div>
+        <div className="zoom-controls">
+          <button className="zoom-btn" onClick={() => setZoom((z) => Math.max(MIN_ZOOM, z - ZOOM_STEP))} title="Zoom out">-</button>
+          <span className="zoom-label" onClick={() => setZoom(1)} title="Reset zoom">{Math.round(zoom * 100)}%</span>
+          <button className="zoom-btn" onClick={() => setZoom((z) => Math.min(MAX_ZOOM, z + ZOOM_STEP))} title="Zoom in">+</button>
+        </div>
       </div>
+      <div ref={viewportRef} className="grid-viewport" style={{ overflow: zoom > 1 ? 'auto' : 'hidden' }}>
       <div
         ref={gridRef}
-        className={`floor-plan-grid ${gridModeClass}`}
+        className={`floor-plan-grid ${gridModeClass}${snapIncrement < 1 ? ' fine-grid' : ''}`}
         style={{
           width: gridWidth,
           height: gridHeight,
-          backgroundSize: `${cellSize}px ${cellSize}px`,
+          ...(snapIncrement < 1 ? {
+            backgroundSize: `${cellSize}px ${cellSize}px, ${cellSize}px ${cellSize}px, ${cellSize * snapIncrement}px ${cellSize * snapIncrement}px, ${cellSize * snapIncrement}px ${cellSize * snapIncrement}px`,
+          } : {
+            backgroundSize: `${cellSize}px ${cellSize}px`,
+          }),
         }}
         onDragOver={(e: React.DragEvent) => {
           if (isDrawMode || isEraseMode || isWallMode || isDoorMode || isCeilingDrawMode) {
@@ -602,13 +636,13 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
                 style={edge.orientation === 'horizontal' ? {
                   left: edge.x * cellSize,
                   top: edge.y * cellSize - 1,
-                  width: cellSize,
+                  width: cellSize * SNAP_FINE,
                   height: 2,
                 } : {
                   left: edge.x * cellSize - 1,
                   top: edge.y * cellSize,
                   width: 2,
-                  height: cellSize,
+                  height: cellSize * SNAP_FINE,
                 }}
               />
             ))}
@@ -756,7 +790,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
             }}
           >
             <span className="draw-preview-label">
-              {previewRect.width} &times; {previewRect.height}
+              {formatDimension(previewRect.width)} &times; {formatDimension(previewRect.height)}
             </span>
           </div>
         )}
@@ -810,6 +844,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
             room={room}
           />
         ))}
+      </div>
       </div>
     </div>
   )

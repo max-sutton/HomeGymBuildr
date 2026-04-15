@@ -1,3 +1,4 @@
+import { SNAP_COARSE, snapLabel } from '../utils/snap'
 import './DrawToolbar.css'
 
 interface Props {
@@ -17,6 +18,9 @@ interface Props {
   onClearRegions: () => void
   onClearWalls: () => void
   onClearDoors: () => void
+  snapLevel: number
+  onCycleSnap: () => void
+  snapIncrement: number
 }
 
 export default function DrawToolbar({
@@ -36,6 +40,9 @@ export default function DrawToolbar({
   onClearRegions,
   onClearWalls,
   onClearDoors,
+  snapLevel,
+  onCycleSnap,
+  snapIncrement,
 }: Props) {
   return (
     <div className="draw-toolbar">
@@ -84,6 +91,24 @@ export default function DrawToolbar({
           </svg>
           {isDoorMode ? 'Placing...' : 'Door'}
         </button>
+      </div>
+      <div className="snap-toggle-row">
+        <button
+          className={`snap-toggle ${snapLevel !== SNAP_COARSE ? 'active' : ''}`}
+          onClick={onCycleSnap}
+          title="Cycle grid snap: 1ft → 6in → 3in"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <line x1="0" y1="7" x2="14" y2="7" />
+            <line x1="7" y1="0" x2="7" y2="14" />
+            <line x1="3.5" y1="5" x2="3.5" y2="9" opacity="0.4" />
+            <line x1="10.5" y1="5" x2="10.5" y2="9" opacity="0.4" />
+            <line x1="5" y1="3.5" x2="9" y2="3.5" opacity="0.4" />
+            <line x1="5" y1="10.5" x2="9" y2="10.5" opacity="0.4" />
+          </svg>
+          {snapLabel(snapIncrement)}
+        </button>
+        <span className="snap-hint">Hold Shift to switch</span>
       </div>
       {isDrawMode && (
         <p className="draw-hint">Click and drag on the grid to draw floor regions</p>

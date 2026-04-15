@@ -1,5 +1,6 @@
 import { useReducer } from 'react'
 import type { GymRoom, PlacedEquipment, FloorRegion, Wall, CeilingZone, Door } from '../types'
+import { SNAP_FINE, coordKey } from '../utils/snap'
 
 export interface GymLayoutState {
   room: GymRoom
@@ -44,13 +45,14 @@ const initialState: GymLayoutState = {
   },
 }
 
-/** Convert floor regions to a set of cell keys */
+/** Convert floor regions to a set of cell keys (quarter-foot resolution) */
 function regionsToCells(regions: FloorRegion[]): Set<string> {
   const cells = new Set<string>()
+  const step = SNAP_FINE
   for (const r of regions) {
-    for (let x = r.x; x < r.x + r.width; x++) {
-      for (let y = r.y; y < r.y + r.height; y++) {
-        cells.add(`${x},${y}`)
+    for (let x = r.x; x < r.x + r.width - step / 2; x += step) {
+      for (let y = r.y; y < r.y + r.height - step / 2; y += step) {
+        cells.add(coordKey(x, y))
       }
     }
   }
@@ -60,6 +62,7 @@ function regionsToCells(regions: FloorRegion[]): Set<string> {
 /** Convert a cell set into optimised non-overlapping rectangles (greedy row scan) */
 function cellsToRegions(cells: Set<string>): FloorRegion[] {
   if (cells.size === 0) return []
+  const step = SNAP_FINE
   const visited = new Set<string>()
   const regions: FloorRegion[] = []
   // Determine bounds
@@ -72,18 +75,18 @@ function cellsToRegions(cells: Set<string>): FloorRegion[] {
     if (y > maxY) maxY = y
   }
   let id = 0
-  for (let y = minY; y <= maxY; y++) {
-    for (let x = minX; x <= maxX; x++) {
-      const key = `${x},${y}`
+  for (let y = minY; y <= maxY + step / 2; y += step) {
+    for (let x = minX; x <= maxX + step / 2; x += step) {
+      const key = coordKey(x, y)
       if (!cells.has(key) || visited.has(key)) continue
       // Extend right
       let w = 0
-      while (cells.has(`${x + w},${y}`) && !visited.has(`${x + w},${y}`)) w++
+      while (cells.has(coordKey(x + w * step, y)) && !visited.has(coordKey(x + w * step, y))) w++
       // Extend down while full row matches
       let h = 1
       outer: while (true) {
         for (let dx = 0; dx < w; dx++) {
-          const k = `${x + dx},${y + h}`
+          const k = coordKey(x + dx * step, y + h * step)
           if (!cells.has(k) || visited.has(k)) break outer
         }
         h++
@@ -91,10 +94,10 @@ function cellsToRegions(cells: Set<string>): FloorRegion[] {
       // Mark visited
       for (let dy = 0; dy < h; dy++) {
         for (let dx = 0; dx < w; dx++) {
-          visited.add(`${x + dx},${y + dy}`)
+          visited.add(coordKey(x + dx * step, y + dy * step))
         }
       }
-      regions.push({ id: `region-${id++}`, x, y, width: w, height: h })
+      regions.push({ id: `region-${id++}`, x, y, width: w * step, height: h * step })
     }
   }
   return regions
@@ -157,9 +160,10 @@ function gymLayoutReducer(state: GymLayoutState, action: Action): GymLayoutState
     case 'ADD_FLOOR_REGION': {
       const cells = regionsToCells(state.room.floorRegions)
       const { x, y, width, height } = action.payload
-      for (let dx = 0; dx < width; dx++) {
-        for (let dy = 0; dy < height; dy++) {
-          cells.add(`${x + dx},${y + dy}`)
+      const step = SNAP_FINE
+      for (let dx = 0; dx < width - step / 2; dx += step) {
+        for (let dy = 0; dy < height - step / 2; dy += step) {
+          cells.add(coordKey(x + dx, y + dy))
         }
       }
       return {
@@ -170,9 +174,10 @@ function gymLayoutReducer(state: GymLayoutState, action: Action): GymLayoutState
     case 'ERASE_FLOOR_AREA': {
       const cells = regionsToCells(state.room.floorRegions)
       const { x, y, width, height } = action.payload
-      for (let dx = 0; dx < width; dx++) {
-        for (let dy = 0; dy < height; dy++) {
-          cells.delete(`${x + dx},${y + dy}`)
+      const step = SNAP_FINE
+      for (let dx = 0; dx < width - step / 2; dx += step) {
+        for (let dy = 0; dy < height - step / 2; dy += step) {
+          cells.delete(coordKey(x + dx, y + dy))
         }
       }
       return {
@@ -205,8 +210,10 @@ function gymLayoutReducer(state: GymLayoutState, action: Action): GymLayoutState
         },
       }
     case 'TOGGLE_WALL': {
+      const px = action.payload.x.toFixed(2)
+      const py = action.payload.y.toFixed(2)
       const existing = state.room.walls.find(
-        (w) => w.x === action.payload.x && w.y === action.payload.y && w.orientation === action.payload.orientation
+        (w) => w.x.toFixed(2) === px && w.y.toFixed(2) === py && w.orientation === action.payload.orientation
       )
       return {
         ...state,
@@ -219,12 +226,12 @@ function gymLayoutReducer(state: GymLayoutState, action: Action): GymLayoutState
       }
     }
     case 'ADD_WALLS': {
-      // Add walls that don't already exist
+      // Add walls that don't already exist (float-safe keys)
       const existingKeys = new Set(
-        state.room.walls.map((w) => `${w.x},${w.y},${w.orientation}`)
+        state.room.walls.map((w) => `${w.x.toFixed(2)},${w.y.toFixed(2)},${w.orientation}`)
       )
       const newWalls = action.payload.filter(
-        (w) => !existingKeys.has(`${w.x},${w.y},${w.orientation}`)
+        (w) => !existingKeys.has(`${w.x.toFixed(2)},${w.y.toFixed(2)},${w.orientation}`)
       )
       return {
         ...state,
