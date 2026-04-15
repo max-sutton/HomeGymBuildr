@@ -24,6 +24,23 @@ interface Props {
 
 const MAX_GRID_PX = 700
 const MIN_CELL_SIZE = 20
+const HOVER_THRESHOLD = 0.3 // feet — proximity to edge for dimension highlight
+
+interface EdgeRun {
+  orientation: 'horizontal' | 'vertical'
+  fixed: number   // y for horizontal, x for vertical
+  start: number   // starting x (horiz) or y (vert)
+  end: number     // end position (inclusive of last segment)
+}
+
+function edgeRunFromRect(x: number, y: number, w: number, d: number): EdgeRun[] {
+  return [
+    { orientation: 'horizontal', fixed: y, start: x, end: x + w },         // top
+    { orientation: 'horizontal', fixed: y + d, start: x, end: x + w },     // bottom
+    { orientation: 'vertical', fixed: x, start: y, end: y + d },           // left
+    { orientation: 'vertical', fixed: x + w, start: y, end: y + d },       // right
+  ]
+}
 
 interface DrawPreview {
   startX: number
@@ -109,11 +126,16 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
     return { x, y, width: w, height: h }
   }
 
-  // Build floor cell set and compute perimeter edges
+  // Build floor cell set, perimeter edges, and merged edge runs for dimension highlighting
   const hasFloorRegions = room.floorRegions.length > 0
-  const { floorCells, perimeterEdges } = useMemo(() => {
+  const { floorCells, perimeterEdges, edgeRuns } = useMemo(() => {
     const cells = new Set<string>()
-    if (!hasFloorRegions) return { floorCells: cells, perimeterEdges: [] as { x: number; y: number; orientation: 'horizontal' | 'vertical' }[] }
+    const emptyResult = {
+      floorCells: cells,
+      perimeterEdges: [] as { x: number; y: number; orientation: 'horizontal' | 'vertical' }[],
+      edgeRuns: [] as EdgeRun[],
+    }
+    if (!hasFloorRegions) return emptyResult
 
     const step = SNAP_FINE
     for (const region of room.floorRegions) {
@@ -128,20 +150,106 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
     const edges: { x: number; y: number; orientation: 'horizontal' | 'vertical' }[] = []
     for (const key of cells) {
       const [cx, cy] = key.split(',').map(Number)
-      // Top edge
       if (!cells.has(coordKey(cx, cy - step))) edges.push({ x: cx, y: cy, orientation: 'horizontal' })
-      // Bottom edge
       if (!cells.has(coordKey(cx, cy + step))) edges.push({ x: cx, y: cy + step, orientation: 'horizontal' })
-      // Left edge
       if (!cells.has(coordKey(cx - step, cy))) edges.push({ x: cx, y: cy, orientation: 'vertical' })
-      // Right edge
       if (!cells.has(coordKey(cx + step, cy))) edges.push({ x: cx + step, y: cy, orientation: 'vertical' })
     }
 
-    return { floorCells: cells, perimeterEdges: edges }
+    // Merge adjacent edge segments into contiguous runs
+    const groups = new Map<string, number[]>()
+    for (const edge of edges) {
+      const fixed = edge.orientation === 'horizontal' ? edge.y : edge.x
+      const variable = edge.orientation === 'horizontal' ? edge.x : edge.y
+      const key = `${edge.orientation}-${fixed.toFixed(4)}`
+      let group = groups.get(key)
+      if (!group) { group = []; groups.set(key, group) }
+      group.push(variable)
+    }
+
+    const runs: EdgeRun[] = []
+    for (const [key, vars] of groups) {
+      vars.sort((a, b) => a - b)
+      const [orientation] = key.split('-') as ['horizontal' | 'vertical']
+      const fixed = Number(key.slice(key.indexOf('-') + 1))
+      let start = vars[0]
+      let end = vars[0]
+      for (let i = 1; i < vars.length; i++) {
+        if (vars[i] - end <= step + 0.001) {
+          end = vars[i]
+        } else {
+          runs.push({ orientation, fixed, start, end: end + step })
+          start = vars[i]
+          end = vars[i]
+        }
+      }
+      runs.push({ orientation, fixed, start, end: end + step })
+    }
+
+    return { floorCells: cells, perimeterEdges: edges, edgeRuns: runs }
   }, [room.floorRegions, hasFloorRegions])
 
   const floorArea = hasFloorRegions ? floorCells.size * SNAP_FINE * SNAP_FINE : room.width * room.depth
+
+  // Equipment edge runs for dimension highlighting
+  const equipmentEdgeRuns = useMemo(() => {
+    const runs: EdgeRun[] = []
+    for (const placed of room.placedEquipment) {
+      const eq = equipmentCatalog.find((e) => e.id === placed.equipmentId)
+      if (!eq) continue
+      const dims = getEffectiveDimensions(placed, eq)
+      runs.push(...edgeRunFromRect(placed.x, placed.y, dims.width, dims.depth))
+    }
+    return runs
+  }, [room.placedEquipment])
+
+  // --- Dimension highlight on edge hover ---
+  const [hoveredFloorRun, setHoveredFloorRun] = useState<EdgeRun | null>(null)
+  const [hoveredEquipRun, setHoveredEquipRun] = useState<EdgeRun | null>(null)
+
+  const handleDimensionHover = useCallback(
+    (e: React.MouseEvent) => {
+      if (isDrawing.current || isDrawMode || isEraseMode || isWallMode || isDoorMode || isCeilingDrawMode) {
+        if (hoveredFloorRun) setHoveredFloorRun(null)
+        if (hoveredEquipRun) setHoveredEquipRun(null)
+        return
+      }
+
+      const { fx, fy } = toFractionalGrid(e.clientX, e.clientY)
+
+      // Find closest floor edge run
+      let bestFloor: EdgeRun | null = null
+      let bestFloorDist = HOVER_THRESHOLD
+      if (hasFloorRegions) {
+        for (const run of edgeRuns) {
+          const perpDist = run.orientation === 'horizontal'
+            ? Math.abs(fy - run.fixed) : Math.abs(fx - run.fixed)
+          if (perpDist >= bestFloorDist) continue
+          const along = run.orientation === 'horizontal' ? fx : fy
+          if (along < run.start - HOVER_THRESHOLD || along > run.end + HOVER_THRESHOLD) continue
+          bestFloorDist = perpDist
+          bestFloor = run
+        }
+      }
+
+      // Find closest equipment edge run
+      let bestEquip: EdgeRun | null = null
+      let bestEquipDist = HOVER_THRESHOLD
+      for (const run of equipmentEdgeRuns) {
+        const perpDist = run.orientation === 'horizontal'
+          ? Math.abs(fy - run.fixed) : Math.abs(fx - run.fixed)
+        if (perpDist >= bestEquipDist) continue
+        const along = run.orientation === 'horizontal' ? fx : fy
+        if (along < run.start - HOVER_THRESHOLD || along > run.end + HOVER_THRESHOLD) continue
+        bestEquipDist = perpDist
+        bestEquip = run
+      }
+
+      if (bestFloor !== hoveredFloorRun) setHoveredFloorRun(bestFloor)
+      if (bestEquip !== hoveredEquipRun) setHoveredEquipRun(bestEquip)
+    },
+    [edgeRuns, equipmentEdgeRuns, toFractionalGrid, isDrawMode, isEraseMode, isWallMode, isDoorMode, isCeilingDrawMode, hasFloorRegions, hoveredFloorRun, hoveredEquipRun]
+  )
 
   // --- Mouse handlers for draw/erase/wall-drag mode ---
   const handleMouseDown = useCallback(
@@ -605,8 +713,9 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
           if (!isDrawMode && !isEraseMode) setSelectedId(null)
         }}
         onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
+        onMouseMove={(e) => { handleMouseMove(e); handleDimensionHover(e) }}
         onMouseUp={handleMouseUp}
+        onMouseLeave={() => { setHoveredFloorRun(null); setHoveredEquipRun(null) }}
       >
         {/* Floor region overlay — merged rendering */}
         {hasFloorRegions && (
@@ -648,6 +757,54 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
             ))}
           </div>
         )}
+
+        {/* Dimension highlight — floor edges (blue) */}
+        <div
+          className="dimension-highlight"
+          style={hoveredFloorRun ? (hoveredFloorRun.orientation === 'horizontal' ? {
+            left: hoveredFloorRun.start * cellSize,
+            top: hoveredFloorRun.fixed * cellSize - 3,
+            width: (hoveredFloorRun.end - hoveredFloorRun.start) * cellSize,
+            height: 6,
+            opacity: 1,
+          } : {
+            left: hoveredFloorRun.fixed * cellSize - 3,
+            top: hoveredFloorRun.start * cellSize,
+            width: 6,
+            height: (hoveredFloorRun.end - hoveredFloorRun.start) * cellSize,
+            opacity: 1,
+          }) : { opacity: 0 }}
+        >
+          {hoveredFloorRun && (
+            <span className="dimension-label">
+              {formatDimension(hoveredFloorRun.end - hoveredFloorRun.start)}
+            </span>
+          )}
+        </div>
+
+        {/* Dimension highlight — equipment edges (orange) */}
+        <div
+          className="dimension-highlight dimension-highlight-equip"
+          style={hoveredEquipRun ? (hoveredEquipRun.orientation === 'horizontal' ? {
+            left: hoveredEquipRun.start * cellSize,
+            top: hoveredEquipRun.fixed * cellSize - 3,
+            width: (hoveredEquipRun.end - hoveredEquipRun.start) * cellSize,
+            height: 6,
+            opacity: 1,
+          } : {
+            left: hoveredEquipRun.fixed * cellSize - 3,
+            top: hoveredEquipRun.start * cellSize,
+            width: 6,
+            height: (hoveredEquipRun.end - hoveredEquipRun.start) * cellSize,
+            opacity: 1,
+          }) : { opacity: 0 }}
+        >
+          {hoveredEquipRun && (
+            <span className="dimension-label">
+              {formatDimension(hoveredEquipRun.end - hoveredEquipRun.start)}
+            </span>
+          )}
+        </div>
 
         {/* Walls */}
         {room.walls.map((wall) => (
@@ -789,9 +946,18 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
               height: previewRect.height * cellSize,
             }}
           >
-            <span className="draw-preview-label">
-              {formatDimension(previewRect.width)} &times; {formatDimension(previewRect.height)}
-            </span>
+            {/* Width dimension line — below the rectangle */}
+            <div className="dim-line dim-line-h">
+              <div className="dim-tick dim-tick-left" />
+              <span className="dim-line-label">{formatDimension(previewRect.width)}</span>
+              <div className="dim-tick dim-tick-right" />
+            </div>
+            {/* Height dimension line — right of the rectangle */}
+            <div className="dim-line dim-line-v">
+              <div className="dim-tick dim-tick-top" />
+              <span className="dim-line-label">{formatDimension(previewRect.height)}</span>
+              <div className="dim-tick dim-tick-bottom" />
+            </div>
           </div>
         )}
 

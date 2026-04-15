@@ -96,7 +96,7 @@ export default function DrawToolbar({
         <button
           className={`snap-toggle ${snapLevel !== SNAP_COARSE ? 'active' : ''}`}
           onClick={onCycleSnap}
-          title="Cycle grid snap: 1ft → 6in → 3in"
+          title="Cycle grid snap: 1ft → 6in → 3in → 1in"
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
             <line x1="0" y1="7" x2="14" y2="7" />

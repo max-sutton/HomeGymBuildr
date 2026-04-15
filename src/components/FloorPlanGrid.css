@@ -79,6 +79,7 @@
     linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
   border: 2px solid var(--border-color);
   border-radius: 4px;
+  overflow: hidden;
 }
 
 .floor-plan-grid.fine-grid {
@@ -138,6 +139,33 @@
   position: absolute;
   background: rgba(74, 144, 217, 0.5);
   pointer-events: none;
+}
+
+/* Dimension highlight on hovered edge */
+.dimension-highlight {
+  position: absolute;
+  background: rgba(74, 144, 217, 0.6);
+  border-radius: 2px;
+  z-index: 2;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dimension-highlight-equip {
+  background: rgba(230, 160, 50, 0.6);
+}
+
+.dimension-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.75);
+  padding: 2px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
 }
 
 /* Walls */
@@ -218,18 +246,67 @@
   border-radius: 2px;
   z-index: 10;
   pointer-events: none;
+}
+
+/* Dimension lines along draw preview edges */
+.dim-line {
+  position: absolute;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.draw-preview-label {
-  font-size: 12px;
+.dim-line-h {
+  left: 0;
+  right: 0;
+  bottom: -20px;
+  height: 16px;
+  flex-direction: row;
+  border-bottom: 1px solid #6ab0ff;
+}
+
+.dim-line-v {
+  top: 0;
+  bottom: 0;
+  right: -20px;
+  width: 16px;
+  flex-direction: column;
+  border-right: 1px solid #6ab0ff;
+}
+
+/* Tick marks at the ends of dimension lines */
+.dim-tick {
+  position: absolute;
+  background: #6ab0ff;
+}
+
+.dim-line-h .dim-tick {
+  width: 1px;
+  height: 10px;
+  bottom: 0;
+}
+
+.dim-line-h .dim-tick-left { left: 0; }
+.dim-line-h .dim-tick-right { right: 0; }
+
+.dim-line-v .dim-tick {
+  height: 1px;
+  width: 10px;
+  right: 0;
+}
+
+.dim-line-v .dim-tick-top { top: 0; }
+.dim-line-v .dim-tick-bottom { bottom: 0; }
+
+.dim-line-label {
+  font-size: 11px;
+  font-weight: 600;
   color: #6ab0ff;
-  background: rgba(0, 0, 0, 0.6);
-  padding: 2px 6px;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 1px 5px;
   border-radius: 3px;
   white-space: nowrap;
+  z-index: 1;
 }
 
 /* Erase preview */
