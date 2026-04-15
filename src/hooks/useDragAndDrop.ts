@@ -6,6 +6,10 @@ export interface DragData {
   instanceId?: string
   offsetX?: number
   offsetY?: number
+  /** Set when dragging a door from the toolbar */
+  doorWidth?: number
+  doorHingeSide?: 'left' | 'right'
+  doorSwingSide?: 1 | -1
 }
 
 const MIME = 'application/json'

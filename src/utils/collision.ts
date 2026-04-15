@@ -113,23 +113,21 @@ function wallCutsRect(rect: Rect, walls: Wall[]): boolean {
 }
 
 /** Get the obstruction rectangle for a door (the swing area extending into the room) */
-export function getDoorObstructionRect(door: Door, room: GymRoom): Rect {
+export function getDoorObstructionRect(door: Door): Rect {
   const w = door.width
-  if (door.wall === 'top') {
-    return { x: door.position, y: 0, width: w, height: w }
-  } else if (door.wall === 'bottom') {
-    return { x: door.position, y: room.depth - w, width: w, height: w }
-  } else if (door.wall === 'left') {
-    return { x: 0, y: door.position, width: w, height: w }
+  if (door.orientation === 'horizontal') {
+    const y = door.swingSide === 1 ? door.wallLine : door.wallLine - w
+    return { x: door.position, y, width: w, height: w }
   } else {
-    return { x: room.width - w, y: door.position, width: w, height: w }
+    const x = door.swingSide === 1 ? door.wallLine : door.wallLine - w
+    return { x, y: door.position, width: w, height: w }
   }
 }
 
 /** Check if a rect overlaps with any door obstruction zones */
-function doorBlocksRect(rect: Rect, doors: Door[], room: GymRoom): boolean {
+function doorBlocksRect(rect: Rect, doors: Door[]): boolean {
   for (const door of doors) {
-    const doorRect = getDoorObstructionRect(door, room)
+    const doorRect = getDoorObstructionRect(door)
     if (rectsOverlap(rect, doorRect)) return true
   }
   return false
@@ -159,7 +157,7 @@ export function isWithinBounds(item: PlacedEquipment, room: GymRoom): boolean {
 
   // Equipment cannot overlap with door swing areas
   if (room.doors && room.doors.length > 0) {
-    if (doorBlocksRect(rect, room.doors, room)) return false
+    if (doorBlocksRect(rect, room.doors)) return false
   }
 
   return true

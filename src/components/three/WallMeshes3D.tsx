@@ -43,11 +43,11 @@ function WallMeshes3D({ room }: Props) {
       {room.doors.map((door) => {
         const doorH = Math.min(DOOR_HEIGHT, h)
         const halfDoorH = doorH / 2
-        if (door.wall === 'top' || door.wall === 'bottom') {
-          const z = door.wall === 'top' ? 0 : room.depth
+        if (door.orientation === 'horizontal') {
+          // Horizontal wall: door leaf along x-axis, swings along z
           const doorCenterX = door.position + door.width / 2
-          // Open door extends into the room
-          const zOffset = door.wall === 'top' ? door.width / 2 : -door.width / 2
+          const z = door.wallLine
+          const zOffset = door.swingSide * door.width / 2
           return (
             <mesh key={door.id} position={[doorCenterX, halfDoorH, z + zOffset]} rotation={[0, Math.PI / 2, 0]}>
               <boxGeometry args={[door.width, doorH, 0.08]} />
@@ -55,9 +55,10 @@ function WallMeshes3D({ room }: Props) {
             </mesh>
           )
         } else {
-          const x = door.wall === 'left' ? 0 : room.width
+          // Vertical wall: door leaf along z-axis, swings along x
           const doorCenterZ = door.position + door.width / 2
-          const xOffset = door.wall === 'left' ? door.width / 2 : -door.width / 2
+          const x = door.wallLine
+          const xOffset = door.swingSide * door.width / 2
           return (
             <mesh key={door.id} position={[x + xOffset, halfDoorH, doorCenterZ]}>
               <boxGeometry args={[door.width, doorH, 0.08]} />

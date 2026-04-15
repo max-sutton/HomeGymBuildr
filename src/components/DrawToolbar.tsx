@@ -1,4 +1,6 @@
+import { useRef } from 'react'
 import { SNAP_COARSE, snapLabel } from '../utils/snap'
+import DoorConfigPanel from './DoorConfigPanel'
 import './DrawToolbar.css'
 
 interface Props {
@@ -15,6 +17,10 @@ interface Props {
   doorCount: number
   doorWidth: number
   onDoorWidthChange: (width: number) => void
+  doorHingeSide: 'left' | 'right'
+  onDoorHingeSideChange: (side: 'left' | 'right') => void
+  doorSwingSide: 1 | -1
+  onDoorSwingSideChange: (side: 1 | -1) => void
   onClearRegions: () => void
   onClearWalls: () => void
   onClearDoors: () => void
@@ -37,6 +43,10 @@ export default function DrawToolbar({
   doorCount,
   doorWidth,
   onDoorWidthChange,
+  doorHingeSide,
+  onDoorHingeSideChange,
+  doorSwingSide,
+  onDoorSwingSideChange,
   onClearRegions,
   onClearWalls,
   onClearDoors,
@@ -44,6 +54,8 @@ export default function DrawToolbar({
   onCycleSnap,
   snapIncrement,
 }: Props) {
+  const doorBtnRef = useRef<HTMLButtonElement>(null)
+
   return (
     <div className="draw-toolbar">
       <h3 className="section-title">Floor Plan</h3>
@@ -81,6 +93,7 @@ export default function DrawToolbar({
           {isWallMode ? 'Walling...' : 'Wall'}
         </button>
         <button
+          ref={doorBtnRef}
           className={`draw-toggle door-toggle ${isDoorMode ? 'active' : ''}`}
           onClick={onToggleDoorMode}
         >
@@ -91,6 +104,18 @@ export default function DrawToolbar({
           </svg>
           {isDoorMode ? 'Placing...' : 'Door'}
         </button>
+        {isDoorMode && (
+          <DoorConfigPanel
+            doorWidth={doorWidth}
+            onDoorWidthChange={onDoorWidthChange}
+            hingeSide={doorHingeSide}
+            onHingeSideChange={onDoorHingeSideChange}
+            swingSide={doorSwingSide}
+            onSwingSideChange={onDoorSwingSideChange}
+            onClose={onToggleDoorMode}
+            anchorRef={doorBtnRef}
+          />
+        )}
       </div>
       <div className="snap-toggle-row">
         <button
@@ -120,21 +145,7 @@ export default function DrawToolbar({
         <p className="draw-hint wall-hint">Click a grid edge to place or remove a wall</p>
       )}
       {isDoorMode && (
-        <>
-          <p className="draw-hint door-hint">Click a wall to place. Click a door to flip. Shift+click to remove.</p>
-          <div className="door-width-input">
-            <label>Door width</label>
-            <input
-              type="number"
-              min={2}
-              max={8}
-              step={0.5}
-              value={doorWidth}
-              onChange={(e) => onDoorWidthChange(Number(e.target.value))}
-            />
-            <span>ft</span>
-          </div>
-        </>
+        <p className="draw-hint door-hint">Drag the door onto a wall. Click to flip hinge. Alt+click to flip swing. Shift+click to remove.</p>
       )}
       {regionCount > 0 && (
         <div className="region-info">

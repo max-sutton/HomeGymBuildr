@@ -130,6 +130,34 @@
   color: var(--text-secondary);
 }
 
+.door-drag-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px;
+  border: 1px dashed rgba(100, 200, 180, 0.4);
+  border-radius: 6px;
+  background: rgba(100, 200, 180, 0.06);
+  cursor: grab;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.door-drag-preview:hover {
+  background: rgba(100, 200, 180, 0.12);
+  border-color: #64c8b4;
+}
+
+.door-drag-preview:active {
+  cursor: grabbing;
+}
+
+.door-drag-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #7edcc8;
+}
+
 .snap-toggle-row {
   display: flex;
   align-items: center;

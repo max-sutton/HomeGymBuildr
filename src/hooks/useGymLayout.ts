@@ -27,6 +27,7 @@ type Action =
   | { type: 'ADD_DOOR'; payload: Door }
   | { type: 'REMOVE_DOOR'; payload: { id: string } }
   | { type: 'FLIP_DOOR'; payload: { id: string } }
+  | { type: 'FLIP_DOOR_SWING'; payload: { id: string } }
   | { type: 'CLEAR_DOORS' }
 
 export type GymLayoutDispatch = React.Dispatch<Action>
@@ -302,6 +303,18 @@ function gymLayoutReducer(state: GymLayoutState, action: Action): GymLayoutState
           doors: state.room.doors.map((d) =>
             d.id === action.payload.id
               ? { ...d, hingeSide: d.hingeSide === 'left' ? 'right' as const : 'left' as const }
+              : d
+          ),
+        },
+      }
+    case 'FLIP_DOOR_SWING':
+      return {
+        ...state,
+        room: {
+          ...state.room,
+          doors: state.room.doors.map((d) =>
+            d.id === action.payload.id
+              ? { ...d, swingSide: (d.swingSide === 1 ? -1 : 1) as 1 | -1 }
               : d
           ),
         },

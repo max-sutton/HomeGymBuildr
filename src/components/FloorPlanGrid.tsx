@@ -5,6 +5,7 @@ import { equipmentCatalog } from '../data/equipmentCatalog'
 import { CATEGORY_COLORS } from '../types'
 import { snapToGrid, snapFloor, formatDimension, SNAP_FINE, coordKey } from '../utils/snap'
 import { checkOverlap, isWithinBounds, getEffectiveDimensions } from '../utils/collision'
+import { getAllWallSegments, findNearestWallSegment } from '../utils/wallSegments'
 import EquipmentBlock from './EquipmentBlock'
 import './FloorPlanGrid.css'
 
@@ -16,6 +17,8 @@ interface Props {
   isWallMode: boolean
   isDoorMode: boolean
   doorWidth: number
+  doorHingeSide: 'left' | 'right'
+  doorSwingSide: 1 | -1
   isCeilingDrawMode: boolean
   ceilingZoneHeight: number
   onClearDrawModes: () => void
@@ -49,7 +52,7 @@ interface DrawPreview {
   endY: number
 }
 
-export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode, isWallMode, isDoorMode, doorWidth, isCeilingDrawMode, ceilingZoneHeight, onClearDrawModes, snapIncrement }: Props) {
+export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode, isWallMode, isDoorMode, doorWidth, doorHingeSide, doorSwingSide, isCeilingDrawMode, ceilingZoneHeight, onClearDrawModes, snapIncrement }: Props) {
   const { room } = state
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const { handleDragOver: baseDragOver, parseDrop } = useDragAndDrop()
@@ -80,6 +83,16 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
   const [dragPreview, setDragPreview] = useState<{
     x: number; y: number; width: number; height: number
     equipmentId: string; valid: boolean
+  } | null>(null)
+
+  // Door drag preview state
+  const [doorDragPreview, setDoorDragPreview] = useState<{
+    orientation: 'horizontal' | 'vertical'
+    wallLine: number
+    position: number
+    width: number
+    hingeSide: 'left' | 'right'
+    swingSide: 1 | -1
   } | null>(null)
 
   const baseCellSize = Math.max(
@@ -188,6 +201,12 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
 
     return { floorCells: cells, perimeterEdges: edges, edgeRuns: runs }
   }, [room.floorRegions, hasFloorRegions])
+
+  // Unified wall segments (perimeter + interior) for door snapping
+  const wallSegments = useMemo(
+    () => getAllWallSegments(room.walls, edgeRuns, room, hasFloorRegions),
+    [room.walls, edgeRuns, room, hasFloorRegions]
+  )
 
   const floorArea = hasFloorRegions ? floorCells.size * SNAP_FINE * SNAP_FINE : room.width * room.depth
 
@@ -442,6 +461,13 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
     return () => window.removeEventListener('mouseup', handler)
   }, [handleMouseUp])
 
+  // Auto-exit erase mode when nothing left to erase
+  useEffect(() => {
+    if (isEraseMode && room.floorRegions.length === 0 && room.walls.length === 0) {
+      onClearDrawModes()
+    }
+  }, [isEraseMode, room.floorRegions.length, room.walls.length, onClearDrawModes])
+
   // --- Drag preview handler ---
   const handleDragOver = useCallback(
     (e: React.DragEvent) => {
@@ -455,6 +481,28 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
       const pixelX = e.clientX - rect.left
       const pixelY = e.clientY - rect.top
 
+      // Door drag preview
+      if (data.equipmentId === '__door__' && data.doorWidth) {
+        const fx = pixelX / cellSize
+        const fy = pixelY / cellSize
+        const snap = findNearestWallSegment(fx, fy, wallSegments, data.doorWidth, snapIncrement)
+        if (snap) {
+          setDoorDragPreview({
+            orientation: snap.orientation,
+            wallLine: snap.wallLine,
+            position: snap.position,
+            width: data.doorWidth,
+            hingeSide: data.doorHingeSide ?? 'left',
+            swingSide: data.doorSwingSide ?? 1,
+          })
+        } else {
+          setDoorDragPreview(null)
+        }
+        setDragPreview(null)
+        return
+      }
+
+      setDoorDragPreview(null)
       let x: number, y: number, eqWidth: number, eqDepth: number, eqId: string
 
       if (data.instanceId) {
@@ -492,11 +540,12 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         setDragPreview({ x, y, width: eqWidth, height: eqDepth, equipmentId: eqId, valid })
       }
     },
-    [baseDragOver, cellSize, room, snapIncrement]
+    [baseDragOver, cellSize, room, snapIncrement, wallSegments]
   )
 
   const handleDragLeave = useCallback(() => {
     setDragPreview(null)
+    setDoorDragPreview(null)
   }, [])
 
   // --- Click handler for wall mode ---
@@ -550,58 +599,57 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
       e.preventDefault()
       const { fx, fy } = toFractionalGrid(e.clientX, e.clientY)
 
-      // Determine which perimeter wall the click is closest to
-      const distTop = fy
-      const distBottom = room.depth - fy
-      const distLeft = fx
-      const distRight = room.width - fx
-
-      const minDist = Math.min(distTop, distBottom, distLeft, distRight)
-      // Only place if click is near a wall (within 1.5 cells)
-      if (minDist > 1.5) return
-
-      let wall: 'top' | 'bottom' | 'left' | 'right'
-      let position: number
-
-      if (minDist === distTop) {
-        wall = 'top'
-        position = snapFloor(fx - doorWidth / 2, snapIncrement)
-      } else if (minDist === distBottom) {
-        wall = 'bottom'
-        position = snapFloor(fx - doorWidth / 2, snapIncrement)
-      } else if (minDist === distLeft) {
-        wall = 'left'
-        position = snapFloor(fy - doorWidth / 2, snapIncrement)
-      } else {
-        wall = 'right'
-        position = snapFloor(fy - doorWidth / 2, snapIncrement)
-      }
-
-      // Clamp position to wall bounds
-      const wallLength = (wall === 'top' || wall === 'bottom') ? room.width : room.depth
-      position = Math.max(0, Math.min(position, wallLength - doorWidth))
+      const snap = findNearestWallSegment(fx, fy, wallSegments, doorWidth, snapIncrement)
+      if (!snap) return
 
       dispatch({
         type: 'ADD_DOOR',
         payload: {
           id: `door-${Date.now()}`,
-          wall,
-          position,
+          orientation: snap.orientation,
+          wallLine: snap.wallLine,
+          position: snap.position,
           width: doorWidth,
-          hingeSide: 'left',
+          hingeSide: doorHingeSide,
+          swingSide: doorSwingSide,
         },
       })
     },
-    [isDoorMode, toFractionalGrid, room.width, room.depth, doorWidth, dispatch, snapIncrement]
+    [isDoorMode, toFractionalGrid, wallSegments, doorWidth, doorHingeSide, doorSwingSide, dispatch, snapIncrement]
   )
 
   // --- Drop handler ---
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       setDragPreview(null)
-      if (isDrawMode || isWallMode || isDoorMode) return
+      setDoorDragPreview(null)
       const data = parseDrop(e)
       if (!data || !gridRef.current) return
+
+      // Handle door drop
+      if (data.equipmentId === '__door__' && data.doorWidth) {
+        const rect = gridRef.current.getBoundingClientRect()
+        const fx = (e.clientX - rect.left) / cellSize
+        const fy = (e.clientY - rect.top) / cellSize
+        const snap = findNearestWallSegment(fx, fy, wallSegments, data.doorWidth, snapIncrement)
+        if (snap) {
+          dispatch({
+            type: 'ADD_DOOR',
+            payload: {
+              id: `door-${Date.now()}`,
+              orientation: snap.orientation,
+              wallLine: snap.wallLine,
+              position: snap.position,
+              width: data.doorWidth,
+              hingeSide: data.doorHingeSide ?? 'left',
+              swingSide: data.doorSwingSide ?? 1,
+            },
+          })
+        }
+        return
+      }
+
+      if (isDrawMode || isWallMode) return
 
       const rect = gridRef.current.getBoundingClientRect()
       const pixelX = e.clientX - rect.left
@@ -630,7 +678,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         }
       }
     },
-    [cellSize, dispatch, parseDrop, room, isDrawMode, isWallMode, snapIncrement]
+    [cellSize, dispatch, parseDrop, room, isDrawMode, isWallMode, snapIncrement, wallSegments]
   )
 
   // Keyboard shortcuts
@@ -851,66 +899,40 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         {/* Doors */}
         {room.doors.map((door) => {
           const w = door.width * cellSize
-          const isLeft = door.hingeSide === 'left'
-          // Compute position and SVG path based on which wall + hinge side
-          let left: number, top: number, svgWidth: number, svgHeight: number
-          let linePath: string, arcPath: string
+          const svgSize = w
+          let left: number, top: number, linePath: string, arcPath: string
 
-          if (door.wall === 'top') {
+          if (door.orientation === 'horizontal') {
+            // Wall runs horizontally; door leaf is along x-axis
             left = door.position * cellSize
-            top = 0
-            svgWidth = w
-            svgHeight = w
-            if (isLeft) {
-              // Hinge at left, leaf goes right along wall, arc sweeps down-right
-              linePath = `M0,0 L${w},0`
-              arcPath = `M${w},0 A${w},${w} 0 0,1 0,${w}`
+            top = door.swingSide === 1 ? door.wallLine * cellSize : door.wallLine * cellSize - w
+            const wallY = door.swingSide === 1 ? 0 : w // wall edge within SVG
+            const arcY = door.swingSide === 1 ? w : 0 // arc end
+            linePath = `M0,${wallY} L${w},${wallY}`
+            if (door.hingeSide === 'left') {
+              arcPath = door.swingSide === 1
+                ? `M${w},${wallY} A${w},${w} 0 0,1 0,${arcY}`
+                : `M${w},${wallY} A${w},${w} 0 0,0 0,${arcY}`
             } else {
-              // Hinge at right, leaf goes left along wall, arc sweeps down-left
-              linePath = `M0,0 L${w},0`
-              arcPath = `M0,0 A${w},${w} 0 0,0 ${w},${w}`
-            }
-          } else if (door.wall === 'bottom') {
-            left = door.position * cellSize
-            top = room.depth * cellSize - w
-            svgWidth = w
-            svgHeight = w
-            if (isLeft) {
-              // Hinge at left, arc sweeps up
-              linePath = `M0,${w} L${w},${w}`
-              arcPath = `M${w},${w} A${w},${w} 0 0,0 0,0`
-            } else {
-              linePath = `M0,${w} L${w},${w}`
-              arcPath = `M0,${w} A${w},${w} 0 0,1 ${w},0`
-            }
-          } else if (door.wall === 'left') {
-            left = 0
-            top = door.position * cellSize
-            svgWidth = w
-            svgHeight = w
-            if (isLeft) {
-              // Hinge at top, arc sweeps right-down
-              linePath = `M0,0 L0,${w}`
-              arcPath = `M0,${w} A${w},${w} 0 0,0 ${w},0`
-            } else {
-              // Hinge at bottom, arc sweeps right-up
-              linePath = `M0,0 L0,${w}`
-              arcPath = `M0,0 A${w},${w} 0 0,1 ${w},${w}`
+              arcPath = door.swingSide === 1
+                ? `M0,${wallY} A${w},${w} 0 0,0 ${w},${arcY}`
+                : `M0,${wallY} A${w},${w} 0 0,1 ${w},${arcY}`
             }
           } else {
-            // right wall
-            left = room.width * cellSize - w
+            // Wall runs vertically; door leaf is along y-axis
+            left = door.swingSide === 1 ? door.wallLine * cellSize : door.wallLine * cellSize - w
             top = door.position * cellSize
-            svgWidth = w
-            svgHeight = w
-            if (isLeft) {
-              // Hinge at top, arc sweeps left-down
-              linePath = `M${w},0 L${w},${w}`
-              arcPath = `M${w},${w} A${w},${w} 0 0,1 0,0`
+            const wallX = door.swingSide === 1 ? 0 : w
+            const arcX = door.swingSide === 1 ? w : 0
+            linePath = `M${wallX},0 L${wallX},${w}`
+            if (door.hingeSide === 'left') {
+              arcPath = door.swingSide === 1
+                ? `M${wallX},${w} A${w},${w} 0 0,0 ${arcX},0`
+                : `M${wallX},${w} A${w},${w} 0 0,1 ${arcX},0`
             } else {
-              // Hinge at bottom, arc sweeps left-up
-              linePath = `M${w},0 L${w},${w}`
-              arcPath = `M${w},0 A${w},${w} 0 0,0 0,${w}`
+              arcPath = door.swingSide === 1
+                ? `M${wallX},0 A${w},${w} 0 0,1 ${arcX},${w}`
+                : `M${wallX},0 A${w},${w} 0 0,0 ${arcX},${w}`
             }
           }
 
@@ -918,12 +940,14 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
             <svg
               key={door.id}
               className={`door-icon ${isDoorMode ? 'interactive' : ''}`}
-              style={{ position: 'absolute', left, top, width: svgWidth, height: svgHeight }}
-              viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+              style={{ position: 'absolute', left, top, width: svgSize, height: svgSize }}
+              viewBox={`0 0 ${svgSize} ${svgSize}`}
               onClick={isDoorMode ? (e) => {
                 e.stopPropagation()
                 if (e.shiftKey) {
                   dispatch({ type: 'REMOVE_DOOR', payload: { id: door.id } })
+                } else if (e.altKey) {
+                  dispatch({ type: 'FLIP_DOOR_SWING', payload: { id: door.id } })
                 } else {
                   dispatch({ type: 'FLIP_DOOR', payload: { id: door.id } })
                 }
@@ -934,6 +958,56 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
             </svg>
           )
         })}
+
+        {/* Door drag preview */}
+        {doorDragPreview && (() => {
+          const dp = doorDragPreview
+          const w = dp.width * cellSize
+          let left: number, top: number, linePath: string, arcPath: string
+
+          if (dp.orientation === 'horizontal') {
+            left = dp.position * cellSize
+            top = dp.swingSide === 1 ? dp.wallLine * cellSize : dp.wallLine * cellSize - w
+            const wallY = dp.swingSide === 1 ? 0 : w
+            const arcY = dp.swingSide === 1 ? w : 0
+            linePath = `M0,${wallY} L${w},${wallY}`
+            if (dp.hingeSide === 'left') {
+              arcPath = dp.swingSide === 1
+                ? `M${w},${wallY} A${w},${w} 0 0,1 0,${arcY}`
+                : `M${w},${wallY} A${w},${w} 0 0,0 0,${arcY}`
+            } else {
+              arcPath = dp.swingSide === 1
+                ? `M0,${wallY} A${w},${w} 0 0,0 ${w},${arcY}`
+                : `M0,${wallY} A${w},${w} 0 0,1 ${w},${arcY}`
+            }
+          } else {
+            left = dp.swingSide === 1 ? dp.wallLine * cellSize : dp.wallLine * cellSize - w
+            top = dp.position * cellSize
+            const wallX = dp.swingSide === 1 ? 0 : w
+            const arcX = dp.swingSide === 1 ? w : 0
+            linePath = `M${wallX},0 L${wallX},${w}`
+            if (dp.hingeSide === 'left') {
+              arcPath = dp.swingSide === 1
+                ? `M${wallX},${w} A${w},${w} 0 0,0 ${arcX},0`
+                : `M${wallX},${w} A${w},${w} 0 0,1 ${arcX},0`
+            } else {
+              arcPath = dp.swingSide === 1
+                ? `M${wallX},0 A${w},${w} 0 0,1 ${arcX},${w}`
+                : `M${wallX},0 A${w},${w} 0 0,0 ${arcX},${w}`
+            }
+          }
+
+          return (
+            <svg
+              className="door-icon"
+              style={{ position: 'absolute', left, top, width: w, height: w, opacity: 0.5, pointerEvents: 'none' }}
+              viewBox={`0 0 ${w} ${w}`}
+            >
+              <path d={arcPath} fill="none" stroke="#64c8b4" strokeWidth="1.5" strokeDasharray="4 3" opacity="0.6" />
+              <path d={linePath} fill="none" stroke="#64c8b4" strokeWidth="3" />
+            </svg>
+          )
+        })()}
 
         {/* Draw/erase preview rectangle */}
         {previewRect && (

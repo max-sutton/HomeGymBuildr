@@ -53,14 +53,18 @@ export interface Wall {
 export interface Door {
   /** Unique identifier */
   id: string
-  /** Which perimeter wall the door is on */
-  wall: 'top' | 'bottom' | 'left' | 'right'
-  /** Position along the wall in feet (from left for top/bottom walls, from top for left/right walls) */
+  /** Wall orientation: 'horizontal' or 'vertical' */
+  orientation: 'horizontal' | 'vertical'
+  /** Fixed coordinate of the wall line (y for horizontal, x for vertical) */
+  wallLine: number
+  /** Position along the wall in feet (x for horizontal, y for vertical) */
   position: number
   /** Door width in feet */
   width: number
-  /** Which side the hinge is on when looking at the wall from inside the room */
+  /** Which side the hinge is on */
   hingeSide: 'left' | 'right'
+  /** Which side the door swings toward: +1 or -1 relative to wall normal */
+  swingSide: 1 | -1
 }
 
 export interface CeilingZone {
@@ -95,7 +99,7 @@ export interface GymRoom {
   walls: Wall[]
   /** Ceiling zones with varying heights */
   ceilingZones: CeilingZone[]
-  /** Doors placed on perimeter walls */
+  /** Doors placed on walls (perimeter and interior) */
   doors: Door[]
 }
 
