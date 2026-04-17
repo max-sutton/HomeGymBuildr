@@ -102,62 +102,6 @@
   color: #7edcc8;
 }
 
-.door-width-input {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.door-width-input label {
-  flex-shrink: 0;
-}
-
-.door-width-input input {
-  width: 60px;
-  padding: 4px 6px;
-  border-radius: 4px;
-  border: 1px solid var(--border-color);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 12px;
-  text-align: center;
-}
-
-.door-width-input span {
-  flex-shrink: 0;
-  color: var(--text-secondary);
-}
-
-.door-drag-preview {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 12px;
-  border: 1px dashed rgba(100, 200, 180, 0.4);
-  border-radius: 6px;
-  background: rgba(100, 200, 180, 0.06);
-  cursor: grab;
-  transition: background 0.15s, border-color 0.15s;
-}
-
-.door-drag-preview:hover {
-  background: rgba(100, 200, 180, 0.12);
-  border-color: #64c8b4;
-}
-
-.door-drag-preview:active {
-  cursor: grabbing;
-}
-
-.door-drag-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: #7edcc8;
-}
-
 .snap-toggle-row {
   display: flex;
   align-items: center;

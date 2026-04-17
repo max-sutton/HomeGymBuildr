@@ -17,9 +17,6 @@ function App() {
   const [isEraseMode, setIsEraseMode] = useState(false)
   const [isWallMode, setIsWallMode] = useState(false)
   const [isDoorMode, setIsDoorMode] = useState(false)
-  const [doorWidth, setDoorWidth] = useState(3)
-  const [doorHingeSide, setDoorHingeSide] = useState<'left' | 'right'>('left')
-  const [doorSwingSide, setDoorSwingSide] = useState<1 | -1>(1)
   const [isCeilingDrawMode, setIsCeilingDrawMode] = useState(false)
   const [ceilingZoneHeight, setCeilingZoneHeight] = useState(7)
   const [view3D, setView3D] = useState(false)
@@ -93,12 +90,6 @@ function App() {
           regionCount={state.room.floorRegions.length}
           wallCount={state.room.walls.length}
           doorCount={state.room.doors.length}
-          doorWidth={doorWidth}
-          onDoorWidthChange={setDoorWidth}
-          doorHingeSide={doorHingeSide}
-          onDoorHingeSideChange={setDoorHingeSide}
-          doorSwingSide={doorSwingSide}
-          onDoorSwingSideChange={setDoorSwingSide}
           onClearRegions={() => dispatch({ type: 'CLEAR_FLOOR_REGIONS' })}
           onClearWalls={() => dispatch({ type: 'CLEAR_WALLS' })}
           onClearDoors={() => dispatch({ type: 'CLEAR_DOORS' })}
@@ -133,9 +124,6 @@ function App() {
             isEraseMode={isEraseMode}
             isWallMode={isWallMode}
             isDoorMode={isDoorMode}
-            doorWidth={doorWidth}
-            doorHingeSide={doorHingeSide}
-            doorSwingSide={doorSwingSide}
             isCeilingDrawMode={isCeilingDrawMode}
             ceilingZoneHeight={ceilingZoneHeight}
             onClearDrawModes={clearDrawModes}

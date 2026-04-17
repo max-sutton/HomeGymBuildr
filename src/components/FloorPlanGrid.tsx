@@ -3,11 +3,41 @@ import type { GymLayoutState, GymLayoutDispatch } from '../hooks/useGymLayout'
 import { useDragAndDrop, getActiveDragData } from '../hooks/useDragAndDrop'
 import { equipmentCatalog } from '../data/equipmentCatalog'
 import { CATEGORY_COLORS } from '../types'
+import type { Door } from '../types'
 import { snapToGrid, snapFloor, formatDimension, SNAP_FINE, coordKey } from '../utils/snap'
 import { checkOverlap, isWithinBounds, getEffectiveDimensions } from '../utils/collision'
 import { getAllWallSegments, findNearestWallSegment } from '../utils/wallSegments'
+import type { WallSegment } from '../utils/wallSegments'
 import EquipmentBlock from './EquipmentBlock'
 import './FloorPlanGrid.css'
+
+/** Hinge position along the wall (grid-space, fixed during resize) */
+function doorHingeAlong(door: Door): number {
+  return door.hingeSide === 'left' ? door.position : door.position + door.width
+}
+
+/** Bounding rect (grid-space) of the door's swept quarter-circle area */
+function doorBounds(door: Door): { x: number; y: number; width: number; height: number } {
+  const w = door.width
+  if (door.orientation === 'horizontal') {
+    const y = door.swingSide === 1 ? door.wallLine : door.wallLine - w
+    return { x: door.position, y, width: w, height: w }
+  }
+  const x = door.swingSide === 1 ? door.wallLine : door.wallLine - w
+  return { x, y: door.position, width: w, height: w }
+}
+
+/** Find the wall segment a door sits on, so we can clamp resize to it. */
+function findDoorSegment(door: Door, segments: WallSegment[]): WallSegment | null {
+  for (const seg of segments) {
+    if (seg.orientation !== door.orientation) continue
+    if (Math.abs(seg.fixed - door.wallLine) > 0.01) continue
+    if (door.position < seg.start - 0.001) continue
+    if (door.position + door.width > seg.end + 0.001) continue
+    return seg
+  }
+  return null
+}
 
 interface Props {
   state: GymLayoutState
@@ -16,9 +46,6 @@ interface Props {
   isEraseMode: boolean
   isWallMode: boolean
   isDoorMode: boolean
-  doorWidth: number
-  doorHingeSide: 'left' | 'right'
-  doorSwingSide: 1 | -1
   isCeilingDrawMode: boolean
   ceilingZoneHeight: number
   onClearDrawModes: () => void
@@ -28,6 +55,9 @@ interface Props {
 const MAX_GRID_PX = 700
 const MIN_CELL_SIZE = 20
 const HOVER_THRESHOLD = 0.3 // feet — proximity to edge for dimension highlight
+const DEFAULT_DOOR_WIDTH = 3
+const DOOR_MIN_WIDTH = 2
+const DOOR_MAX_WIDTH = 8
 
 interface EdgeRun {
   orientation: 'horizontal' | 'vertical'
@@ -52,7 +82,7 @@ interface DrawPreview {
   endY: number
 }
 
-export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode, isWallMode, isDoorMode, doorWidth, doorHingeSide, doorSwingSide, isCeilingDrawMode, ceilingZoneHeight, onClearDrawModes, snapIncrement }: Props) {
+export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode, isWallMode, isDoorMode, isCeilingDrawMode, ceilingZoneHeight, onClearDrawModes, snapIncrement }: Props) {
   const { room } = state
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const { handleDragOver: baseDragOver, parseDrop } = useDragAndDrop()
@@ -85,14 +115,17 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
     equipmentId: string; valid: boolean
   } | null>(null)
 
-  // Door drag preview state
-  const [doorDragPreview, setDoorDragPreview] = useState<{
+  // Selected door id (only interactive in door mode)
+  const [selectedDoorId, setSelectedDoorId] = useState<string | null>(null)
+
+  // Active resize-drag state — set when user grabs the corner handle
+  const resizeState = useRef<{
+    doorId: string
     orientation: 'horizontal' | 'vertical'
-    wallLine: number
-    position: number
-    width: number
+    hingeAlong: number
     hingeSide: 'left' | 'right'
-    swingSide: 1 | -1
+    segStart: number
+    segEnd: number
   } | null>(null)
 
   const baseCellSize = Math.max(
@@ -481,28 +514,6 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
       const pixelX = e.clientX - rect.left
       const pixelY = e.clientY - rect.top
 
-      // Door drag preview
-      if (data.equipmentId === '__door__' && data.doorWidth) {
-        const fx = pixelX / cellSize
-        const fy = pixelY / cellSize
-        const snap = findNearestWallSegment(fx, fy, wallSegments, data.doorWidth, snapIncrement)
-        if (snap) {
-          setDoorDragPreview({
-            orientation: snap.orientation,
-            wallLine: snap.wallLine,
-            position: snap.position,
-            width: data.doorWidth,
-            hingeSide: data.doorHingeSide ?? 'left',
-            swingSide: data.doorSwingSide ?? 1,
-          })
-        } else {
-          setDoorDragPreview(null)
-        }
-        setDragPreview(null)
-        return
-      }
-
-      setDoorDragPreview(null)
       let x: number, y: number, eqWidth: number, eqDepth: number, eqId: string
 
       if (data.instanceId) {
@@ -540,12 +551,11 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         setDragPreview({ x, y, width: eqWidth, height: eqDepth, equipmentId: eqId, valid })
       }
     },
-    [baseDragOver, cellSize, room, snapIncrement, wallSegments]
+    [baseDragOver, cellSize, room, snapIncrement]
   )
 
   const handleDragLeave = useCallback(() => {
     setDragPreview(null)
-    setDoorDragPreview(null)
   }, [])
 
   // --- Click handler for wall mode ---
@@ -593,61 +603,93 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
   )
 
   // --- Click handler for door mode ---
+  // Placing a new door: click empty wall. Selection is handled on the door SVG itself.
   const handleDoorClick = useCallback(
     (e: React.MouseEvent) => {
       if (!isDoorMode) return
       e.preventDefault()
       const { fx, fy } = toFractionalGrid(e.clientX, e.clientY)
 
-      const snap = findNearestWallSegment(fx, fy, wallSegments, doorWidth, snapIncrement)
-      if (!snap) return
+      // Try default width first; if it doesn't fit the segment, shrink to the largest that does.
+      let snap = findNearestWallSegment(fx, fy, wallSegments, DEFAULT_DOOR_WIDTH, snapIncrement)
+      let width = DEFAULT_DOOR_WIDTH
+      if (!snap) {
+        // Walk down widths looking for a fit (min 2ft).
+        for (let w = DEFAULT_DOOR_WIDTH - snapIncrement; w >= DOOR_MIN_WIDTH - 0.001; w -= snapIncrement) {
+          const s = findNearestWallSegment(fx, fy, wallSegments, w, snapIncrement)
+          if (s) { snap = s; width = w; break }
+        }
+      }
+      if (!snap) { setSelectedDoorId(null); return }
 
+      const id = `door-${Date.now()}`
       dispatch({
         type: 'ADD_DOOR',
         payload: {
-          id: `door-${Date.now()}`,
+          id,
           orientation: snap.orientation,
           wallLine: snap.wallLine,
           position: snap.position,
-          width: doorWidth,
-          hingeSide: doorHingeSide,
-          swingSide: doorSwingSide,
+          width,
+          hingeSide: 'left',
+          swingSide: 1,
         },
       })
+      setSelectedDoorId(id)
     },
-    [isDoorMode, toFractionalGrid, wallSegments, doorWidth, doorHingeSide, doorSwingSide, dispatch, snapIncrement]
+    [isDoorMode, toFractionalGrid, wallSegments, dispatch, snapIncrement]
+  )
+
+  // --- Door resize drag handler ---
+  const handleResizeStart = useCallback(
+    (e: React.MouseEvent, door: Door) => {
+      e.stopPropagation()
+      e.preventDefault()
+      const seg = findDoorSegment(door, wallSegments)
+      if (!seg) return
+      resizeState.current = {
+        doorId: door.id,
+        orientation: door.orientation,
+        hingeAlong: doorHingeAlong(door),
+        hingeSide: door.hingeSide,
+        segStart: seg.start,
+        segEnd: seg.end,
+      }
+
+      const onMove = (ev: MouseEvent) => {
+        const st = resizeState.current
+        if (!st || !gridRef.current) return
+        const rect = gridRef.current.getBoundingClientRect()
+        const fx = (ev.clientX - rect.left) / cellSize
+        const fy = (ev.clientY - rect.top) / cellSize
+        const along = st.orientation === 'horizontal' ? fx : fy
+        const raw = st.hingeSide === 'left' ? along - st.hingeAlong : st.hingeAlong - along
+        let newWidth = snapToGrid(raw, snapIncrement)
+        const maxBySeg = st.hingeSide === 'left'
+          ? st.segEnd - st.hingeAlong
+          : st.hingeAlong - st.segStart
+        newWidth = Math.max(DOOR_MIN_WIDTH, Math.min(DOOR_MAX_WIDTH, Math.min(newWidth, maxBySeg)))
+        if (newWidth < DOOR_MIN_WIDTH - 0.001) return
+        const newPosition = st.hingeSide === 'left' ? st.hingeAlong : st.hingeAlong - newWidth
+        dispatch({ type: 'RESIZE_DOOR', payload: { id: st.doorId, width: newWidth, position: newPosition } })
+      }
+      const onUp = () => {
+        resizeState.current = null
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+      }
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+    },
+    [wallSegments, cellSize, snapIncrement, dispatch]
   )
 
   // --- Drop handler ---
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
       setDragPreview(null)
-      setDoorDragPreview(null)
       const data = parseDrop(e)
       if (!data || !gridRef.current) return
-
-      // Handle door drop
-      if (data.equipmentId === '__door__' && data.doorWidth) {
-        const rect = gridRef.current.getBoundingClientRect()
-        const fx = (e.clientX - rect.left) / cellSize
-        const fy = (e.clientY - rect.top) / cellSize
-        const snap = findNearestWallSegment(fx, fy, wallSegments, data.doorWidth, snapIncrement)
-        if (snap) {
-          dispatch({
-            type: 'ADD_DOOR',
-            payload: {
-              id: `door-${Date.now()}`,
-              orientation: snap.orientation,
-              wallLine: snap.wallLine,
-              position: snap.position,
-              width: data.doorWidth,
-              hingeSide: data.doorHingeSide ?? 'left',
-              swingSide: data.doorSwingSide ?? 1,
-            },
-          })
-        }
-        return
-      }
 
       if (isDrawMode || isWallMode) return
 
@@ -678,12 +720,29 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         }
       }
     },
-    [cellSize, dispatch, parseDrop, room, isDrawMode, isWallMode, snapIncrement, wallSegments]
+    [cellSize, dispatch, parseDrop, room, isDrawMode, isWallMode, snapIncrement]
   )
 
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Door selection shortcuts take priority while a door is selected
+      if (selectedDoorId) {
+        if (e.key === 'f' || e.key === 'F') {
+          dispatch({ type: 'FLIP_DOOR', payload: { id: selectedDoorId } })
+          return
+        }
+        if (e.key === 'r' || e.key === 'R') {
+          dispatch({ type: 'FLIP_DOOR_SWING', payload: { id: selectedDoorId } })
+          return
+        }
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+          dispatch({ type: 'REMOVE_DOOR', payload: { id: selectedDoorId } })
+          setSelectedDoorId(null)
+          return
+        }
+        if (e.key === 'Escape') { setSelectedDoorId(null); return }
+      }
       if (e.key === 'r' || e.key === 'R') {
         if (selectedId) dispatch({ type: 'ROTATE_EQUIPMENT', payload: { instanceId: selectedId } })
       }
@@ -696,7 +755,12 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [selectedId, dispatch])
+  }, [selectedId, selectedDoorId, dispatch])
+
+  // Clear door selection when leaving door mode
+  useEffect(() => {
+    if (!isDoorMode && selectedDoorId) setSelectedDoorId(null)
+  }, [isDoorMode, selectedDoorId])
 
   // Ctrl+scroll to zoom
   const MIN_ZOOM = 0.5
@@ -899,15 +963,13 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         {/* Doors */}
         {room.doors.map((door) => {
           const w = door.width * cellSize
-          const svgSize = w
           let left: number, top: number, linePath: string, arcPath: string
 
           if (door.orientation === 'horizontal') {
-            // Wall runs horizontally; door leaf is along x-axis
             left = door.position * cellSize
             top = door.swingSide === 1 ? door.wallLine * cellSize : door.wallLine * cellSize - w
-            const wallY = door.swingSide === 1 ? 0 : w // wall edge within SVG
-            const arcY = door.swingSide === 1 ? w : 0 // arc end
+            const wallY = door.swingSide === 1 ? 0 : w
+            const arcY = door.swingSide === 1 ? w : 0
             linePath = `M0,${wallY} L${w},${wallY}`
             if (door.hingeSide === 'left') {
               arcPath = door.swingSide === 1
@@ -919,7 +981,6 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
                 : `M0,${wallY} A${w},${w} 0 0,1 ${w},${arcY}`
             }
           } else {
-            // Wall runs vertically; door leaf is along y-axis
             left = door.swingSide === 1 ? door.wallLine * cellSize : door.wallLine * cellSize - w
             top = door.position * cellSize
             const wallX = door.swingSide === 1 ? 0 : w
@@ -936,76 +997,72 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
             }
           }
 
+          const isSelected = selectedDoorId === door.id
           return (
             <svg
               key={door.id}
-              className={`door-icon ${isDoorMode ? 'interactive' : ''}`}
-              style={{ position: 'absolute', left, top, width: svgSize, height: svgSize }}
-              viewBox={`0 0 ${svgSize} ${svgSize}`}
+              className={`door-icon ${isDoorMode ? 'interactive' : ''} ${isSelected ? 'selected' : ''}`}
+              style={{ position: 'absolute', left, top, width: w, height: w }}
+              viewBox={`0 0 ${w} ${w}`}
               onClick={isDoorMode ? (e) => {
                 e.stopPropagation()
-                if (e.shiftKey) {
-                  dispatch({ type: 'REMOVE_DOOR', payload: { id: door.id } })
-                } else if (e.altKey) {
-                  dispatch({ type: 'FLIP_DOOR_SWING', payload: { id: door.id } })
-                } else {
-                  dispatch({ type: 'FLIP_DOOR', payload: { id: door.id } })
-                }
+                setSelectedDoorId(door.id)
+              } : undefined}
+              onContextMenu={isDoorMode ? (e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                dispatch({ type: 'FLIP_DOOR_SWING', payload: { id: door.id } })
               } : undefined}
             >
+              {isDoorMode && <rect x="0" y="0" width={w} height={w} fill="transparent" pointerEvents="all" />}
               <path d={arcPath} fill="none" stroke="#64c8b4" strokeWidth="1.5" strokeDasharray="4 3" opacity="0.6" />
               <path d={linePath} fill="none" stroke="#64c8b4" strokeWidth="3" />
             </svg>
           )
         })}
 
-        {/* Door drag preview */}
-        {doorDragPreview && (() => {
-          const dp = doorDragPreview
-          const w = dp.width * cellSize
-          let left: number, top: number, linePath: string, arcPath: string
-
-          if (dp.orientation === 'horizontal') {
-            left = dp.position * cellSize
-            top = dp.swingSide === 1 ? dp.wallLine * cellSize : dp.wallLine * cellSize - w
-            const wallY = dp.swingSide === 1 ? 0 : w
-            const arcY = dp.swingSide === 1 ? w : 0
-            linePath = `M0,${wallY} L${w},${wallY}`
-            if (dp.hingeSide === 'left') {
-              arcPath = dp.swingSide === 1
-                ? `M${w},${wallY} A${w},${w} 0 0,1 0,${arcY}`
-                : `M${w},${wallY} A${w},${w} 0 0,0 0,${arcY}`
-            } else {
-              arcPath = dp.swingSide === 1
-                ? `M0,${wallY} A${w},${w} 0 0,0 ${w},${arcY}`
-                : `M0,${wallY} A${w},${w} 0 0,1 ${w},${arcY}`
-            }
+        {/* Selected door: outline + corner resize handle */}
+        {isDoorMode && selectedDoorId && (() => {
+          const door = room.doors.find((d) => d.id === selectedDoorId)
+          if (!door) return null
+          const b = doorBounds(door)
+          let handleX: number, handleY: number
+          if (door.orientation === 'horizontal') {
+            handleX = door.hingeSide === 'left' ? door.position + door.width : door.position
+            handleY = door.wallLine + (door.swingSide === 1 ? door.width : -door.width)
           } else {
-            left = dp.swingSide === 1 ? dp.wallLine * cellSize : dp.wallLine * cellSize - w
-            top = dp.position * cellSize
-            const wallX = dp.swingSide === 1 ? 0 : w
-            const arcX = dp.swingSide === 1 ? w : 0
-            linePath = `M${wallX},0 L${wallX},${w}`
-            if (dp.hingeSide === 'left') {
-              arcPath = dp.swingSide === 1
-                ? `M${wallX},${w} A${w},${w} 0 0,0 ${arcX},0`
-                : `M${wallX},${w} A${w},${w} 0 0,1 ${arcX},0`
-            } else {
-              arcPath = dp.swingSide === 1
-                ? `M${wallX},0 A${w},${w} 0 0,1 ${arcX},${w}`
-                : `M${wallX},0 A${w},${w} 0 0,0 ${arcX},${w}`
-            }
+            handleX = door.wallLine + (door.swingSide === 1 ? door.width : -door.width)
+            handleY = door.hingeSide === 'left' ? door.position + door.width : door.position
           }
-
+          const HANDLE = 12
           return (
-            <svg
-              className="door-icon"
-              style={{ position: 'absolute', left, top, width: w, height: w, opacity: 0.5, pointerEvents: 'none' }}
-              viewBox={`0 0 ${w} ${w}`}
-            >
-              <path d={arcPath} fill="none" stroke="#64c8b4" strokeWidth="1.5" strokeDasharray="4 3" opacity="0.6" />
-              <path d={linePath} fill="none" stroke="#64c8b4" strokeWidth="3" />
-            </svg>
+            <>
+              <div
+                className="door-selection-outline"
+                style={{
+                  left: b.x * cellSize,
+                  top: b.y * cellSize,
+                  width: b.width * cellSize,
+                  height: b.height * cellSize,
+                }}
+              />
+              <div
+                className={`door-resize-handle ${door.orientation === 'horizontal' ? 'resize-ew' : 'resize-ns'}`}
+                style={{
+                  left: handleX * cellSize - HANDLE / 2,
+                  top: handleY * cellSize - HANDLE / 2,
+                  width: HANDLE,
+                  height: HANDLE,
+                }}
+                onMouseDown={(e) => handleResizeStart(e, door)}
+              />
+              <div
+                className="door-width-label"
+                style={{ left: (b.x + b.width / 2) * cellSize, top: (b.y + b.height / 2) * cellSize }}
+              >
+                {formatDimension(door.width)}
+              </div>
+            </>
           )
         })()}
 

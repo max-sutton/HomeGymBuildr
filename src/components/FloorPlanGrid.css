@@ -348,7 +348,48 @@
 }
 
 .door-icon.interactive:hover path {
-  stroke: var(--danger);
+  stroke: #a0f0dc;
+}
+
+.door-icon.selected path {
+  stroke: #a0f0dc;
+}
+
+.door-selection-outline {
+  position: absolute;
+  z-index: 5;
+  border: 1.5px dashed #a0f0dc;
+  border-radius: 3px;
+  background: rgba(100, 200, 180, 0.06);
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+.door-resize-handle {
+  position: absolute;
+  z-index: 6;
+  background: #12122a;
+  border: 2px solid #a0f0dc;
+  border-radius: 2px;
+  box-sizing: border-box;
+}
+
+.door-resize-handle.resize-ew { cursor: ew-resize; }
+.door-resize-handle.resize-ns { cursor: ns-resize; }
+.door-resize-handle:hover { background: #a0f0dc; }
+
+.door-width-label {
+  position: absolute;
+  z-index: 5;
+  transform: translate(-50%, -50%);
+  font-size: 11px;
+  font-weight: 600;
+  color: #a0f0dc;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 2px 6px;
+  border-radius: 3px;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 .ceiling-zone-label {
