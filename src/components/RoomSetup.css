@@ -43,3 +43,12 @@
   background: var(--bg-primary);
   border-radius: 4px;
 }
+
+.room-error {
+  font-size: 12px;
+  color: var(--danger);
+  background: rgba(231, 76, 60, 0.12);
+  border: 1px solid var(--danger);
+  border-radius: 4px;
+  padding: 6px 8px;
+}

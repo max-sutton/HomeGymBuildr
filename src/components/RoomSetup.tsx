@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { GymLayoutState, GymLayoutDispatch } from '../hooks/useGymLayout'
 import './RoomSetup.css'
 
@@ -6,8 +7,21 @@ interface Props {
   dispatch: GymLayoutDispatch
 }
 
+const MIN_ROOM_SIZE_FT = 2
+const ROOM_SIZE_ERROR = 'Minimum room width and depth is 2 feet.'
+
 export default function RoomSetup({ state, dispatch }: Props) {
   const { room } = state
+  const [error, setError] = useState<string | null>(null)
+
+  const updateRoom = (width: number, depth: number) => {
+    if (width < MIN_ROOM_SIZE_FT || depth < MIN_ROOM_SIZE_FT) {
+      setError(ROOM_SIZE_ERROR)
+      return
+    }
+    if (error) setError(null)
+    dispatch({ type: 'SET_ROOM', payload: { width, depth } })
+  }
 
   return (
     <div className="room-setup">
@@ -17,27 +31,24 @@ export default function RoomSetup({ state, dispatch }: Props) {
           Width (ft)
           <input
             type="number"
-            min={5}
+            min={MIN_ROOM_SIZE_FT}
             max={100}
             value={room.width}
-            onChange={(e) =>
-              dispatch({ type: 'SET_ROOM', payload: { width: +e.target.value, depth: room.depth } })
-            }
+            onChange={(e) => updateRoom(+e.target.value, room.depth)}
           />
         </label>
         <label>
           Depth (ft)
           <input
             type="number"
-            min={5}
+            min={MIN_ROOM_SIZE_FT}
             max={100}
             value={room.depth}
-            onChange={(e) =>
-              dispatch({ type: 'SET_ROOM', payload: { width: room.width, depth: +e.target.value } })
-            }
+            onChange={(e) => updateRoom(room.width, +e.target.value)}
           />
         </label>
       </div>
+      {error && <div className="room-error" role="alert">{error}</div>}
       <label>
         Budget ($)
         <input

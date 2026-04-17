@@ -39,6 +39,7 @@ export default function GymScene3D({ state }: Props) {
           far: 200,
         }}
         frameloop="demand"
+        onCreated={({ invalidate }) => invalidate()}
       >
         <ambientLight intensity={0.6} />
         <directionalLight position={[room.width, 15, room.depth]} intensity={0.8} />
@@ -46,6 +47,7 @@ export default function GymScene3D({ state }: Props) {
 
         <OrbitControls
           ref={controlsRef}
+          makeDefault
           target={[centerX, room.defaultCeilingHeight * 0.3, centerZ]}
           minDistance={3}
           maxDistance={Math.max(room.width, room.depth) * 3}
