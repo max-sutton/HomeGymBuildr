@@ -3,29 +3,18 @@ import type { GymLayoutState, GymLayoutDispatch } from '../hooks/useGymLayout'
 import { useDragAndDrop, getActiveDragData } from '../hooks/useDragAndDrop'
 import { equipmentCatalog } from '../data/equipmentCatalog'
 import { CATEGORY_COLORS } from '../types'
-import type { Door } from '../types'
-import { snapToGrid, snapFloor, formatDimension, SNAP_FINE, coordKey } from '../utils/snap'
+import type { Door, Wall } from '../types'
+import { snapToGrid, snapFloor, formatDimension, SNAP_FINE } from '../utils/snap'
 import { checkOverlap, isWithinBounds, getEffectiveDimensions } from '../utils/collision'
-import { getAllWallSegments, findNearestWallSegment } from '../utils/wallSegments'
+import { getAllWallSegments, findNearestWallSegment, mergeInteriorWalls, segmentEndpoints } from '../utils/wallSegments'
 import type { WallSegment } from '../utils/wallSegments'
+import { wallKey, makeUnitWall, type WallOrientation } from '../utils/wallGeom'
+import { doorGeometry, doorHingeAlong, doorBoundsAABB } from '../utils/doorGeom'
+import { computeFloorEdges } from '../utils/floorEdges'
+import type { EdgeRun } from '../utils/floorEdges'
+import { WORLD_SIZE_FT, BASE_CELL_PX } from '../utils/world'
 import EquipmentBlock from './EquipmentBlock'
 import './FloorPlanGrid.css'
-
-/** Hinge position along the wall (grid-space, fixed during resize) */
-function doorHingeAlong(door: Door): number {
-  return door.hingeSide === 'left' ? door.position : door.position + door.width
-}
-
-/** Bounding rect (grid-space) of the door's swept quarter-circle area */
-function doorBounds(door: Door): { x: number; y: number; width: number; height: number } {
-  const w = door.width
-  if (door.orientation === 'horizontal') {
-    const y = door.swingSide === 1 ? door.wallLine : door.wallLine - w
-    return { x: door.position, y, width: w, height: w }
-  }
-  const x = door.swingSide === 1 ? door.wallLine : door.wallLine - w
-  return { x, y: door.position, width: w, height: w }
-}
 
 /** Find the wall segment a door sits on, so we can clamp resize to it. */
 function findDoorSegment(door: Door, segments: WallSegment[]): WallSegment | null {
@@ -52,19 +41,10 @@ interface Props {
   snapIncrement: number
 }
 
-const MAX_GRID_PX = 700
-const MIN_CELL_SIZE = 20
 const HOVER_THRESHOLD = 0.3 // feet — proximity to edge for dimension highlight
 const DEFAULT_DOOR_WIDTH = 3
 const DOOR_MIN_WIDTH = 2
 const DOOR_MAX_WIDTH = 8
-
-interface EdgeRun {
-  orientation: 'horizontal' | 'vertical'
-  fixed: number   // y for horizontal, x for vertical
-  start: number   // starting x (horiz) or y (vert)
-  end: number     // end position (inclusive of last segment)
-}
 
 function edgeRunFromRect(x: number, y: number, w: number, d: number): EdgeRun[] {
   return [
@@ -101,8 +81,8 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
     fy: number  // fractional y at mouseDown
   } | null>(null)
   const wallDragMoved = useRef(false)
-  const [wallDragPreview, setWallDragPreview] = useState<{ x: number; y: number; orientation: 'horizontal' | 'vertical' }[]>([])
-  const wallDragPreviewRef = useRef<typeof wallDragPreview>([])
+  const [wallDragPreview, setWallDragPreview] = useState<Wall[]>([])
+  const wallDragPreviewRef = useRef<Wall[]>([])
 
   // Keep ref in sync with state so mouseUp handler always sees latest preview
   useEffect(() => {
@@ -121,21 +101,18 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
   // Active resize-drag state — set when user grabs the corner handle
   const resizeState = useRef<{
     doorId: string
-    orientation: 'horizontal' | 'vertical'
+    orientation: WallOrientation
     hingeAlong: number
     hingeSide: 'left' | 'right'
     segStart: number
     segEnd: number
+    wallLine: number
   } | null>(null)
 
-  const baseCellSize = Math.max(
-    MIN_CELL_SIZE,
-    Math.min(Math.floor(MAX_GRID_PX / room.width), Math.floor(MAX_GRID_PX / room.depth))
-  )
-  const cellSize = baseCellSize * zoom
+  const cellSize = BASE_CELL_PX * zoom
 
-  const gridWidth = room.width * cellSize
-  const gridHeight = room.depth * cellSize
+  const gridWidth = WORLD_SIZE_FT * cellSize
+  const gridHeight = WORLD_SIZE_FT * cellSize
 
   const toGridCoords = useCallback(
     (clientX: number, clientY: number) => {
@@ -144,11 +121,11 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
       const gx = snapFloor((clientX - rect.left) / cellSize, snapIncrement)
       const gy = snapFloor((clientY - rect.top) / cellSize, snapIncrement)
       return {
-        gx: Math.max(0, Math.min(gx, room.width - snapIncrement)),
-        gy: Math.max(0, Math.min(gy, room.depth - snapIncrement)),
+        gx: Math.max(0, Math.min(gx, WORLD_SIZE_FT - snapIncrement)),
+        gy: Math.max(0, Math.min(gy, WORLD_SIZE_FT - snapIncrement)),
       }
     },
-    [cellSize, room.width, room.depth, snapIncrement]
+    [cellSize, snapIncrement]
   )
 
   // Fractional grid position for wall edge detection
@@ -172,76 +149,33 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
     return { x, y, width: w, height: h }
   }
 
-  // Build floor cell set, perimeter edges, and merged edge runs for dimension highlighting
+  // Floor cell set, perimeter edges, and merged edge runs for dimension highlighting
   const hasFloorRegions = room.floorRegions.length > 0
-  const { floorCells, perimeterEdges, edgeRuns } = useMemo(() => {
-    const cells = new Set<string>()
-    const emptyResult = {
-      floorCells: cells,
-      perimeterEdges: [] as { x: number; y: number; orientation: 'horizontal' | 'vertical' }[],
-      edgeRuns: [] as EdgeRun[],
-    }
-    if (!hasFloorRegions) return emptyResult
-
-    const step = SNAP_FINE
-    for (const region of room.floorRegions) {
-      for (let x = region.x; x < region.x + region.width - step / 2; x += step) {
-        for (let y = region.y; y < region.y + region.height - step / 2; y += step) {
-          cells.add(coordKey(x, y))
-        }
-      }
-    }
-
-    // Compute perimeter: edges where floor meets non-floor
-    const edges: { x: number; y: number; orientation: 'horizontal' | 'vertical' }[] = []
-    for (const key of cells) {
-      const [cx, cy] = key.split(',').map(Number)
-      if (!cells.has(coordKey(cx, cy - step))) edges.push({ x: cx, y: cy, orientation: 'horizontal' })
-      if (!cells.has(coordKey(cx, cy + step))) edges.push({ x: cx, y: cy + step, orientation: 'horizontal' })
-      if (!cells.has(coordKey(cx - step, cy))) edges.push({ x: cx, y: cy, orientation: 'vertical' })
-      if (!cells.has(coordKey(cx + step, cy))) edges.push({ x: cx + step, y: cy, orientation: 'vertical' })
-    }
-
-    // Merge adjacent edge segments into contiguous runs
-    const groups = new Map<string, number[]>()
-    for (const edge of edges) {
-      const fixed = edge.orientation === 'horizontal' ? edge.y : edge.x
-      const variable = edge.orientation === 'horizontal' ? edge.x : edge.y
-      const key = `${edge.orientation}-${fixed.toFixed(4)}`
-      let group = groups.get(key)
-      if (!group) { group = []; groups.set(key, group) }
-      group.push(variable)
-    }
-
-    const runs: EdgeRun[] = []
-    for (const [key, vars] of groups) {
-      vars.sort((a, b) => a - b)
-      const [orientation] = key.split('-') as ['horizontal' | 'vertical']
-      const fixed = Number(key.slice(key.indexOf('-') + 1))
-      let start = vars[0]
-      let end = vars[0]
-      for (let i = 1; i < vars.length; i++) {
-        if (vars[i] - end <= step + 0.001) {
-          end = vars[i]
-        } else {
-          runs.push({ orientation, fixed, start, end: end + step })
-          start = vars[i]
-          end = vars[i]
-        }
-      }
-      runs.push({ orientation, fixed, start, end: end + step })
-    }
-
-    return { floorCells: cells, perimeterEdges: edges, edgeRuns: runs }
-  }, [room.floorRegions, hasFloorRegions])
+  const { floorCells, perimeterEdges, edgeRuns } = useMemo(
+    () => computeFloorEdges(room.floorRegions),
+    [room.floorRegions]
+  )
 
   // Unified wall segments (perimeter + interior) for door snapping
   const wallSegments = useMemo(
-    () => getAllWallSegments(room.walls, edgeRuns, room, hasFloorRegions),
-    [room.walls, edgeRuns, room, hasFloorRegions]
+    () => getAllWallSegments(room.walls, edgeRuns),
+    [room.walls, edgeRuns]
   )
 
-  const floorArea = hasFloorRegions ? floorCells.size * SNAP_FINE * SNAP_FINE : room.width * room.depth
+  // Merged interior wall segments — one <line> per run, rather than one per unit
+  const interiorSegments = useMemo(
+    () => wallSegments.filter((s) => !s.isPerimeter),
+    [wallSegments]
+  )
+
+  // Merged drag-preview segment(s) — normally one run, but mergeInteriorWalls handles
+  // the general case if preview ever contains multiple disjoint groups.
+  const previewSegments = useMemo(
+    () => mergeInteriorWalls(wallDragPreview),
+    [wallDragPreview]
+  )
+
+  const floorArea = floorCells.size * SNAP_FINE * SNAP_FINE
 
   // Equipment edge runs for dimension highlighting
   const equipmentEdgeRuns = useMemo(() => {
@@ -323,81 +257,79 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         eraseClickFractional.current = toFractionalGrid(e.clientX, e.clientY)
       }
     },
-    [isDrawMode, isEraseMode, isWallMode, isCeilingDrawMode, toGridCoords, toFractionalGrid, room.width, room.depth]
+    [isDrawMode, isEraseMode, isWallMode, isCeilingDrawMode, toGridCoords, toFractionalGrid]
   )
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
       if (!isDrawing.current) return
       if (wallDragStart.current) {
-        // Wall drag mode — dynamically pick orientation based on drag direction
+        // Wall drag: snap drag direction to nearest 45° multiple (8 directions).
+        // Start corner is the nearest integer grid corner to the mousedown point.
         const { fx, fy } = toFractionalGrid(e.clientX, e.clientY)
         const { fx: startFx, fy: startFy } = wallDragStart.current
-        const dx = Math.abs(fx - startFx)
-        const dy = Math.abs(fy - startFy)
+        const startCx = Math.round(startFx)
+        const startCy = Math.round(startFy)
+        const dx = fx - startCx
+        const dy = fy - startCy
 
-        // Determine orientation: horizontal drag = horizontal wall, vertical drag = vertical wall
-        // Fall back to nearest-grid-line detection when no significant movement yet
-        let orientation: 'horizontal' | 'vertical'
-        let wallCoord: number
-        let startSeg: number
-        let currentSeg: number
+        // Not moved far enough yet — wait for a direction before showing preview
+        if (Math.hypot(dx, dy) < 0.3) { setWallDragPreview([]); return }
 
-        if (dx > 0.3 || dy > 0.3) {
-          // Enough movement to determine direction from drag
-          if (dx >= dy) {
-            orientation = 'horizontal'
-            wallCoord = snapToGrid(startFy, snapIncrement)
-            startSeg = Math.floor(startFx)
-            currentSeg = Math.floor(fx)
-          } else {
-            orientation = 'vertical'
-            wallCoord = snapToGrid(startFx, snapIncrement)
-            startSeg = Math.floor(startFy)
-            currentSeg = Math.floor(fy)
-          }
-        } else {
-          // Barely moved — use nearest grid line from start position
-          const distH = Math.abs(startFy - snapToGrid(startFy, snapIncrement))
-          const distV = Math.abs(startFx - snapToGrid(startFx, snapIncrement))
-          if (distH < distV) {
-            orientation = 'horizontal'
-            wallCoord = snapToGrid(startFy, snapIncrement)
-            startSeg = Math.floor(startFx)
-            currentSeg = Math.floor(fx)
-          } else {
-            orientation = 'vertical'
-            wallCoord = snapToGrid(startFx, snapIncrement)
-            startSeg = Math.floor(startFy)
-            currentSeg = Math.floor(fy)
-          }
+        const angle = Math.atan2(dy, dx)
+        const step = Math.PI / 4
+        const snappedIdx = ((Math.round(angle / step) % 8) + 8) % 8  // 0..7
+        // Map octant index → unit-step direction and orientation
+        const dirs: { sx: number; sy: number; o: WallOrientation }[] = [
+          { sx:  1, sy:  0, o: 'horizontal' }, // 0   E
+          { sx:  1, sy:  1, o: 'diag-pos'   }, // π/4 SE (screen-y grows downward)
+          { sx:  0, sy:  1, o: 'vertical'   }, // π/2 S
+          { sx: -1, sy:  1, o: 'diag-neg'   }, // 3π/4 SW
+          { sx: -1, sy:  0, o: 'horizontal' }, // π   W
+          { sx: -1, sy: -1, o: 'diag-pos'   }, // -3π/4 NW
+          { sx:  0, sy: -1, o: 'vertical'   }, // -π/2 N
+          { sx:  1, sy: -1, o: 'diag-neg'   }, // -π/4 NE
+        ]
+        const { sx, sy, o } = dirs[snappedIdx]
+
+        // Project cursor displacement onto the snapped direction.
+        // Divide by |(sx,sy)|² so `n` is the number of unit-direction steps:
+        //   axial:    |(sx,sy)|² = 1 → n = dx (or dy)
+        //   diagonal: |(sx,sy)|² = 2 → n = (dx·sx + dy·sy)/2
+        const dirLen2 = sx * sx + sy * sy
+        const projLen = (sx * dx + sy * dy) / dirLen2
+        const n = Math.max(1, Math.floor(projLen + 0.0001))
+
+        // Build n unit walls stepping from the start corner along (sx, sy).
+        // Each step's two corners are (cx, cy) and (cx+sx, cy+sy); the anchor for
+        // makeUnitWall is the min-x / min-y corner of that pair (this is the canonical
+        // form regardless of orientation).
+        const preview: Wall[] = []
+        for (let i = 0; i < n; i++) {
+          const cx = startCx + i * sx
+          const cy = startCy + i * sy
+          const ax = sx > 0 ? cx : cx + sx  // min(cx, cx+sx)
+          const ay = sy > 0 ? cy : cy + sy  // min(cy, cy+sy)
+          const w = makeUnitWall(`preview-${i}`, ax, ay, o)
+
+          // Bounds: keep the wall's bounding box inside the world canvas.
+          const minX = Math.min(w.x1, w.x2)
+          const maxX = Math.max(w.x1, w.x2)
+          const minY = Math.min(w.y1, w.y2)
+          const maxY = Math.max(w.y1, w.y2)
+          if (minX < 0 || maxX > WORLD_SIZE_FT || minY < 0 || maxY > WORLD_SIZE_FT) continue
+          preview.push(w)
         }
 
-        // Validate interior wall
-        if (orientation === 'horizontal' && (wallCoord <= 0 || wallCoord >= room.depth)) { setWallDragPreview([]); return }
-        if (orientation === 'vertical' && (wallCoord <= 0 || wallCoord >= room.width)) { setWallDragPreview([]); return }
-
-        if (currentSeg !== startSeg) wallDragMoved.current = true
-
-        const maxSeg = orientation === 'horizontal' ? room.width - 1 : room.depth - 1
-        const from = Math.max(0, Math.min(startSeg, currentSeg))
-        const to = Math.min(maxSeg, Math.max(startSeg, currentSeg))
-        const segments: { x: number; y: number; orientation: 'horizontal' | 'vertical' }[] = []
-        for (let i = from; i <= to; i++) {
-          if (orientation === 'horizontal') {
-            segments.push({ x: i, y: wallCoord, orientation })
-          } else {
-            segments.push({ x: wallCoord, y: i, orientation })
-          }
-        }
-        setWallDragPreview(segments)
+        if (preview.length > 0) wallDragMoved.current = true
+        setWallDragPreview(preview)
         return
       }
       if (!drawPreview) return
       const { gx, gy } = toGridCoords(e.clientX, e.clientY)
       setDrawPreview((prev) => (prev ? { ...prev, endX: gx, endY: gy } : null))
     },
-    [drawPreview, toGridCoords, toFractionalGrid, room.width, room.depth, snapIncrement]
+    [drawPreview, toGridCoords, toFractionalGrid]
   )
 
   const handleMouseUp = useCallback(() => {
@@ -408,12 +340,10 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
       isDrawing.current = false
       const preview = wallDragPreviewRef.current
       if (wallDragMoved.current && preview.length > 0) {
-        // Dragged — place all wall segments
-        const walls = preview.map((seg) => ({
-          id: `wall-${seg.x}-${seg.y}-${seg.orientation}`,
-          x: seg.x,
-          y: seg.y,
-          orientation: seg.orientation,
+        // Re-id walls with stable keys so dedupe in ADD_WALLS reducer works
+        const walls = preview.map((w, i) => ({
+          ...w,
+          id: `wall-${w.x1}-${w.y1}-${w.x2}-${w.y2}-${i}`,
         }))
         dispatch({ type: 'ADD_WALLS', payload: walls })
       }
@@ -459,15 +389,14 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
           wallY = Math.floor(fy)
         }
 
-        // Only interior walls (not perimeter)
+        // Keep within the world canvas
         const valid = orientation === 'horizontal'
-          ? (wallY > 0 && wallY < room.depth && wallX >= 0 && wallX < room.width)
-          : (wallX > 0 && wallX < room.width && wallY >= 0 && wallY < room.depth)
+          ? (wallY >= 0 && wallY <= WORLD_SIZE_FT && wallX >= 0 && wallX < WORLD_SIZE_FT)
+          : (wallX >= 0 && wallX <= WORLD_SIZE_FT && wallY >= 0 && wallY < WORLD_SIZE_FT)
 
         if (valid && Math.min(distH, distV) < 0.35) {
-          const existing = room.walls.find(
-            (w) => w.x.toFixed(2) === wallX.toFixed(2) && w.y.toFixed(2) === wallY.toFixed(2) && w.orientation === orientation
-          )
+          const targetKey = wallKey(makeUnitWall('', wallX, wallY, orientation))
+          const existing = room.walls.find((w) => wallKey(w) === targetKey)
           if (existing) {
             dispatch({ type: 'TOGGLE_WALL', payload: existing })
           }
@@ -585,21 +514,21 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         wallY = Math.floor(fy)
       }
 
-      // Don't allow walls outside the grid
+      // Don't allow walls outside the world canvas
       if (orientation === 'horizontal') {
-        if (wallY <= 0 || wallY >= room.depth) return
-        if (wallX < 0 || wallX >= room.width) return
+        if (wallY < 0 || wallY > WORLD_SIZE_FT) return
+        if (wallX < 0 || wallX >= WORLD_SIZE_FT) return
       } else {
-        if (wallX <= 0 || wallX >= room.width) return
-        if (wallY < 0 || wallY >= room.depth) return
+        if (wallX < 0 || wallX > WORLD_SIZE_FT) return
+        if (wallY < 0 || wallY >= WORLD_SIZE_FT) return
       }
 
       dispatch({
         type: 'TOGGLE_WALL',
-        payload: { id: `wall-${wallX}-${wallY}-${orientation}`, x: wallX, y: wallY, orientation },
+        payload: makeUnitWall(`wall-${wallX}-${wallY}-${orientation}`, wallX, wallY, orientation),
       })
     },
-    [isWallMode, toFractionalGrid, room.width, room.depth, dispatch, snapIncrement]
+    [isWallMode, toFractionalGrid, dispatch, snapIncrement]
   )
 
   // --- Click handler for door mode ---
@@ -608,16 +537,19 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
     (e: React.MouseEvent) => {
       if (!isDoorMode) return
       e.preventDefault()
+      if (selectedDoorId !== null) {
+        setSelectedDoorId(null)
+        return
+      }
       const { fx, fy } = toFractionalGrid(e.clientX, e.clientY)
 
       // Try default width first; if it doesn't fit the segment, shrink to the largest that does.
+      // doorLengthFt is ft-along-wall; findNearestWallSegment converts per segment.
       let snap = findNearestWallSegment(fx, fy, wallSegments, DEFAULT_DOOR_WIDTH, snapIncrement)
-      let width = DEFAULT_DOOR_WIDTH
       if (!snap) {
-        // Walk down widths looking for a fit (min 2ft).
         for (let w = DEFAULT_DOOR_WIDTH - snapIncrement; w >= DOOR_MIN_WIDTH - 0.001; w -= snapIncrement) {
           const s = findNearestWallSegment(fx, fy, wallSegments, w, snapIncrement)
-          if (s) { snap = s; width = w; break }
+          if (s) { snap = s; break }
         }
       }
       if (!snap) { setSelectedDoorId(null); return }
@@ -630,14 +562,14 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
           orientation: snap.orientation,
           wallLine: snap.wallLine,
           position: snap.position,
-          width,
+          width: snap.alongWidth,
           hingeSide: 'left',
           swingSide: 1,
         },
       })
       setSelectedDoorId(id)
     },
-    [isDoorMode, toFractionalGrid, wallSegments, dispatch, snapIncrement]
+    [isDoorMode, selectedDoorId, toFractionalGrid, wallSegments, dispatch, snapIncrement]
   )
 
   // --- Door resize drag handler ---
@@ -654,6 +586,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         hingeSide: door.hingeSide,
         segStart: seg.start,
         segEnd: seg.end,
+        wallLine: door.wallLine,
       }
 
       const onMove = (ev: MouseEvent) => {
@@ -662,16 +595,28 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         const rect = gridRef.current.getBoundingClientRect()
         const fx = (ev.clientX - rect.left) / cellSize
         const fy = (ev.clientY - rect.top) / cellSize
-        const along = st.orientation === 'horizontal' ? fx : fy
+        // Project cursor onto wall's along-axis
+        let along: number
+        if (st.orientation === 'horizontal') along = fx
+        else if (st.orientation === 'vertical') along = fy
+        else if (st.orientation === 'diag-pos') along = (fx + fy - st.wallLine) / 2
+        else along = (fx - fy + st.wallLine) / 2  // diag-neg
+
+        const isDiag = st.orientation === 'diag-pos' || st.orientation === 'diag-neg'
+        const wallScale = isDiag ? Math.SQRT2 : 1
+
         const raw = st.hingeSide === 'left' ? along - st.hingeAlong : st.hingeAlong - along
-        let newWidth = snapToGrid(raw, snapIncrement)
+        let newAlongWidth = snapToGrid(raw, snapIncrement)
+        // Clamp in ft-along-wall units against DOOR_MIN/MAX, then back to along-axis
+        const ftLen = Math.max(DOOR_MIN_WIDTH, Math.min(DOOR_MAX_WIDTH, newAlongWidth * wallScale))
+        newAlongWidth = ftLen / wallScale
         const maxBySeg = st.hingeSide === 'left'
           ? st.segEnd - st.hingeAlong
           : st.hingeAlong - st.segStart
-        newWidth = Math.max(DOOR_MIN_WIDTH, Math.min(DOOR_MAX_WIDTH, Math.min(newWidth, maxBySeg)))
-        if (newWidth < DOOR_MIN_WIDTH - 0.001) return
-        const newPosition = st.hingeSide === 'left' ? st.hingeAlong : st.hingeAlong - newWidth
-        dispatch({ type: 'RESIZE_DOOR', payload: { id: st.doorId, width: newWidth, position: newPosition } })
+        newAlongWidth = Math.min(newAlongWidth, maxBySeg)
+        if (newAlongWidth * wallScale < DOOR_MIN_WIDTH - 0.001) return
+        const newPosition = st.hingeSide === 'left' ? st.hingeAlong : st.hingeAlong - newAlongWidth
+        dispatch({ type: 'RESIZE_DOOR', payload: { id: st.doorId, width: newAlongWidth, position: newPosition } })
       }
       const onUp = () => {
         resizeState.current = null
@@ -733,7 +678,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
           return
         }
         if (e.key === 'r' || e.key === 'R') {
-          dispatch({ type: 'FLIP_DOOR_SWING', payload: { id: selectedDoorId } })
+          dispatch({ type: 'ROTATE_DOOR', payload: { id: selectedDoorId } })
           return
         }
         if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -762,8 +707,8 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
     if (!isDoorMode && selectedDoorId) setSelectedDoorId(null)
   }, [isDoorMode, selectedDoorId])
 
-  // Ctrl+scroll to zoom
-  const MIN_ZOOM = 0.5
+  // Ctrl+scroll to zoom — MIN_ZOOM allows the full 500ft world to fit in a ~750px viewport.
+  const MIN_ZOOM = 0.05
   const MAX_ZOOM = 4
   const ZOOM_STEP = 0.15
   useEffect(() => {
@@ -785,8 +730,9 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
     <div className="floor-plan-wrapper">
       <div className="grid-top-bar">
         <div className="grid-dimensions">
-          {room.width} ft &times; {room.depth} ft
-          {hasFloorRegions && <span className="floor-area"> &middot; {floorArea} sq ft floor</span>}
+          {hasFloorRegions
+            ? <span className="floor-area">{floorArea} sq ft floor</span>
+            : <span>Draw a floor to begin</span>}
         </div>
         <div className="zoom-controls">
           <button className="zoom-btn" onClick={() => setZoom((z) => Math.max(MIN_ZOOM, z - ZOOM_STEP))} title="Zoom out">-</button>
@@ -794,7 +740,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
           <button className="zoom-btn" onClick={() => setZoom((z) => Math.min(MAX_ZOOM, z + ZOOM_STEP))} title="Zoom in">+</button>
         </div>
       </div>
-      <div ref={viewportRef} className="grid-viewport" style={{ overflow: zoom > 1 ? 'auto' : 'hidden' }}>
+      <div ref={viewportRef} className="grid-viewport">
       <div
         ref={gridRef}
         className={`floor-plan-grid ${gridModeClass}${snapIncrement < 1 ? ' fine-grid' : ''}`}
@@ -918,139 +864,157 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
           )}
         </div>
 
-        {/* Walls */}
-        {room.walls.map((wall) => (
-          <div
-            key={wall.id}
-            className={`wall-segment ${wall.orientation} ${isWallMode ? 'interactive' : ''}`}
-            style={wall.orientation === 'horizontal' ? {
-              left: wall.x * cellSize,
-              top: wall.y * cellSize - 2,
-              width: cellSize,
-              height: 4,
-            } : {
-              left: wall.x * cellSize - 2,
-              top: wall.y * cellSize,
-              width: 4,
-              height: cellSize,
-            }}
-            onClick={isWallMode ? (e) => {
-              e.stopPropagation()
-              dispatch({ type: 'TOGGLE_WALL', payload: wall })
-            } : undefined}
-          />
-        ))}
+        {/* Walls — unified SVG overlay handles axial + diagonal.
+            One <line> per merged run of unit walls so adjacent units render as a
+            single continuous stroke (no visible joins in the drag preview's
+            semi-transparent pulse, no duplicated square caps). Wall-mode clicks
+            resolve to the specific unit under the cursor so individual segments
+            can still be toggled off. */}
+        <svg
+          className={`wall-layer ${isWallMode ? 'interactive' : ''}`}
+          width={gridWidth}
+          height={gridHeight}
+        >
+          {interiorSegments.map((seg) => {
+            const p = segmentEndpoints(seg)
+            return (
+              <line
+                key={`seg-${seg.orientation}-${seg.fixed}-${seg.start}-${seg.end}`}
+                x1={p.x1 * cellSize}
+                y1={p.y1 * cellSize}
+                x2={p.x2 * cellSize}
+                y2={p.y2 * cellSize}
+                onClick={isWallMode ? (e) => {
+                  e.stopPropagation()
+                  // Remove every unit wall along the merged run in one dispatch.
+                  const units: Wall[] = []
+                  for (let a = Math.floor(seg.start); a < seg.end - 0.001; a++) {
+                    let ax: number, ay: number
+                    switch (seg.orientation) {
+                      case 'horizontal': ax = a; ay = seg.fixed; break
+                      case 'vertical':   ax = seg.fixed; ay = a; break
+                      case 'diag-pos':   ax = a; ay = a + seg.fixed; break
+                      case 'diag-neg':   ax = a; ay = seg.fixed - a - 1; break
+                    }
+                    units.push(makeUnitWall('', ax, ay, seg.orientation))
+                  }
+                  dispatch({ type: 'REMOVE_WALLS', payload: units })
+                } : undefined}
+              />
+            )
+          })}
+          {previewSegments.map((seg) => {
+            const p = segmentEndpoints(seg)
+            return (
+              <line
+                key={`preview-${seg.orientation}-${seg.fixed}-${seg.start}`}
+                className="wall-drag-preview"
+                x1={p.x1 * cellSize}
+                y1={p.y1 * cellSize}
+                x2={p.x2 * cellSize}
+                y2={p.y2 * cellSize}
+              />
+            )
+          })}
+        </svg>
 
-        {/* Wall drag preview */}
-        {wallDragPreview.map((seg, i) => (
-          <div
-            key={`wall-preview-${i}`}
-            className={`wall-segment ${seg.orientation} wall-drag-preview`}
-            style={seg.orientation === 'horizontal' ? {
-              left: seg.x * cellSize,
-              top: seg.y * cellSize - 2,
-              width: cellSize,
-              height: 4,
-            } : {
-              left: seg.x * cellSize - 2,
-              top: seg.y * cellSize,
-              width: 4,
-              height: cellSize,
-            }}
-          />
-        ))}
+        {/* Doors — unified SVG overlay; each door is a <g> in a local frame where
+            local +x = wallDir, local +y = swingDir (matrix transform handles rotation).
+            Path shapes are identical for every orientation; only the matrix changes. */}
+        <svg
+          className={`door-layer ${isDoorMode ? 'interactive' : ''}`}
+          width={gridWidth}
+          height={gridHeight}
+        >
+          {room.doors.map((door) => {
+            const g = doorGeometry(door)
+            const [wx, wy] = g.wallDir
+            const [sx, sy] = g.swingDir
+            const tx = g.p0[0] * cellSize
+            const ty = g.p0[1] * cellSize
+            const len = g.length * cellSize
+            const matrix = `matrix(${wx} ${wy} ${sx} ${sy} ${tx} ${ty})`
+            const linePath = `M 0,0 L ${len},0`
+            const arcPath = door.hingeSide === 'left'
+              ? `M ${len},0 A ${len},${len} 0 0,1 0,${len}`
+              : `M 0,0 A ${len},${len} 0 0,0 ${len},${len}`
+            const isSelected = selectedDoorId === door.id
+            return (
+              <g
+                key={door.id}
+                className={`door-icon ${isDoorMode ? 'interactive' : ''} ${isSelected ? 'selected' : ''}`}
+                transform={matrix}
+                onClick={isDoorMode ? (e) => {
+                  e.stopPropagation()
+                  setSelectedDoorId(door.id)
+                } : undefined}
+                onContextMenu={isDoorMode ? (e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  dispatch({ type: 'FLIP_DOOR_SWING', payload: { id: door.id } })
+                } : undefined}
+              >
+                {isDoorMode && <rect x="0" y="0" width={len} height={len} fill="transparent" pointerEvents="all" />}
+                <path d={arcPath} fill="none" stroke="#64c8b4" strokeWidth="1.5" strokeDasharray="4 3" opacity="0.6" />
+                <path d={linePath} fill="none" stroke="#64c8b4" strokeWidth="3" />
+                {isSelected && (
+                  <rect x="0" y="0" width={len} height={len} className="door-selection-outline-rect" />
+                )}
+              </g>
+            )
+          })}
+        </svg>
 
-        {/* Doors */}
-        {room.doors.map((door) => {
-          const w = door.width * cellSize
-          let left: number, top: number, linePath: string, arcPath: string
-
-          if (door.orientation === 'horizontal') {
-            left = door.position * cellSize
-            top = door.swingSide === 1 ? door.wallLine * cellSize : door.wallLine * cellSize - w
-            const wallY = door.swingSide === 1 ? 0 : w
-            const arcY = door.swingSide === 1 ? w : 0
-            linePath = `M0,${wallY} L${w},${wallY}`
-            if (door.hingeSide === 'left') {
-              arcPath = door.swingSide === 1
-                ? `M${w},${wallY} A${w},${w} 0 0,1 0,${arcY}`
-                : `M${w},${wallY} A${w},${w} 0 0,0 0,${arcY}`
-            } else {
-              arcPath = door.swingSide === 1
-                ? `M0,${wallY} A${w},${w} 0 0,0 ${w},${arcY}`
-                : `M0,${wallY} A${w},${w} 0 0,1 ${w},${arcY}`
-            }
-          } else {
-            left = door.swingSide === 1 ? door.wallLine * cellSize : door.wallLine * cellSize - w
-            top = door.position * cellSize
-            const wallX = door.swingSide === 1 ? 0 : w
-            const arcX = door.swingSide === 1 ? w : 0
-            linePath = `M${wallX},0 L${wallX},${w}`
-            if (door.hingeSide === 'left') {
-              arcPath = door.swingSide === 1
-                ? `M${wallX},${w} A${w},${w} 0 0,0 ${arcX},0`
-                : `M${wallX},${w} A${w},${w} 0 0,1 ${arcX},0`
-            } else {
-              arcPath = door.swingSide === 1
-                ? `M${wallX},0 A${w},${w} 0 0,1 ${arcX},${w}`
-                : `M${wallX},0 A${w},${w} 0 0,0 ${arcX},${w}`
-            }
-          }
-
-          const isSelected = selectedDoorId === door.id
-          return (
-            <svg
-              key={door.id}
-              className={`door-icon ${isDoorMode ? 'interactive' : ''} ${isSelected ? 'selected' : ''}`}
-              style={{ position: 'absolute', left, top, width: w, height: w }}
-              viewBox={`0 0 ${w} ${w}`}
-              onClick={isDoorMode ? (e) => {
-                e.stopPropagation()
-                setSelectedDoorId(door.id)
-              } : undefined}
-              onContextMenu={isDoorMode ? (e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                dispatch({ type: 'FLIP_DOOR_SWING', payload: { id: door.id } })
-              } : undefined}
-            >
-              {isDoorMode && <rect x="0" y="0" width={w} height={w} fill="transparent" pointerEvents="all" />}
-              <path d={arcPath} fill="none" stroke="#64c8b4" strokeWidth="1.5" strokeDasharray="4 3" opacity="0.6" />
-              <path d={linePath} fill="none" stroke="#64c8b4" strokeWidth="3" />
-            </svg>
-          )
-        })}
-
-        {/* Selected door: outline + corner resize handle */}
+        {/* Selected door: resize handle + action bar + width label */}
         {isDoorMode && selectedDoorId && (() => {
           const door = room.doors.find((d) => d.id === selectedDoorId)
           if (!door) return null
-          const b = doorBounds(door)
-          let handleX: number, handleY: number
-          if (door.orientation === 'horizontal') {
-            handleX = door.hingeSide === 'left' ? door.position + door.width : door.position
-            handleY = door.wallLine + (door.swingSide === 1 ? door.width : -door.width)
-          } else {
-            handleX = door.wallLine + (door.swingSide === 1 ? door.width : -door.width)
-            handleY = door.hingeSide === 'left' ? door.position + door.width : door.position
-          }
+          const g = doorGeometry(door)
+          const aabb = doorBoundsAABB(door)
+          // Handle sits at the "far" corner of the swept square, opposite the hinge.
+          // In local coords this is (len, len) for left hinge, (0, len) for right.
+          const [hx, hy] = g.hinge
+          const [sx, sy] = g.swingDir
+          const handleGridX = (door.hingeSide === 'left' ? g.p1[0] : g.p0[0]) + sx * g.length
+          const handleGridY = (door.hingeSide === 'left' ? g.p1[1] : g.p0[1]) + sy * g.length
+          // Label centered on the square: midpoint between hinge and the opposite-corner.
+          const farX = hx + (door.hingeSide === 'left' ? g.p1[0] - g.p0[0] : g.p0[0] - g.p1[0]) + sx * g.length
+          const farY = hy + (door.hingeSide === 'left' ? g.p1[1] - g.p0[1] : g.p0[1] - g.p1[1]) + sy * g.length
+          const labelX = (hx + farX) / 2
+          const labelY = (hy + farY) / 2
           const HANDLE = 12
+          const BTN = 22
+          const GAP = 4
+          const boundsTopPx = aabb.y * cellSize
+          const barTop = boundsTopPx >= BTN + GAP + 2
+            ? boundsTopPx - BTN - GAP
+            : (aabb.y + aabb.height) * cellSize + GAP
+          const barLeft = aabb.x * cellSize
+          const actionBtn = (
+            index: number,
+            action: 'ROTATE_DOOR' | 'FLIP_DOOR',
+            title: string,
+            glyph: string,
+          ) => (
+            <button
+              type="button"
+              className="door-action-btn"
+              style={{ left: barLeft + index * (BTN + GAP), top: barTop, width: BTN, height: BTN }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation()
+                dispatch({ type: action, payload: { id: door.id } })
+              }}
+              title={title}
+            >{glyph}</button>
+          )
           return (
             <>
               <div
-                className="door-selection-outline"
+                className="door-resize-handle"
                 style={{
-                  left: b.x * cellSize,
-                  top: b.y * cellSize,
-                  width: b.width * cellSize,
-                  height: b.height * cellSize,
-                }}
-              />
-              <div
-                className={`door-resize-handle ${door.orientation === 'horizontal' ? 'resize-ew' : 'resize-ns'}`}
-                style={{
-                  left: handleX * cellSize - HANDLE / 2,
-                  top: handleY * cellSize - HANDLE / 2,
+                  left: handleGridX * cellSize - HANDLE / 2,
+                  top: handleGridY * cellSize - HANDLE / 2,
                   width: HANDLE,
                   height: HANDLE,
                 }}
@@ -1058,10 +1022,12 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
               />
               <div
                 className="door-width-label"
-                style={{ left: (b.x + b.width / 2) * cellSize, top: (b.y + b.height / 2) * cellSize }}
+                style={{ left: labelX * cellSize, top: labelY * cellSize }}
               >
-                {formatDimension(door.width)}
+                {formatDimension(g.length)}
               </div>
+              {actionBtn(0, 'ROTATE_DOOR', 'Rotate 90°', '↻')}
+              {actionBtn(1, 'FLIP_DOOR', 'Flip hinge', '⇌')}
             </>
           )
         })()}

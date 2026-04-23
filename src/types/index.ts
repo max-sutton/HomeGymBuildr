@@ -42,24 +42,24 @@ export interface FloorRegion {
 
 export interface Wall {
   id: string
-  /** Grid x position of the wall segment */
-  x: number
-  /** Grid y position of the wall segment */
-  y: number
-  /** horizontal = wall along a row boundary, vertical = wall along a column boundary */
-  orientation: 'horizontal' | 'vertical'
+  /** Start endpoint (grid feet) */
+  x1: number
+  y1: number
+  /** End endpoint (grid feet) */
+  x2: number
+  y2: number
 }
 
 export interface Door {
   /** Unique identifier */
   id: string
-  /** Wall orientation: 'horizontal' or 'vertical' */
-  orientation: 'horizontal' | 'vertical'
-  /** Fixed coordinate of the wall line (y for horizontal, x for vertical) */
+  /** Wall orientation — matches the orientation of the wall segment the door sits on */
+  orientation: 'horizontal' | 'vertical' | 'diag-pos' | 'diag-neg'
+  /** Line parameter of the wall (wallFixed): y for horiz, x for vert, y1-x1 for diag-pos, y1+x1 for diag-neg */
   wallLine: number
-  /** Position along the wall in feet (x for horizontal, y for vertical) */
+  /** Along-axis start (x for horiz / both diagonals, y for vert), feet */
   position: number
-  /** Door width in feet */
+  /** Along-axis width (for diagonals, wall-length ft = width * √2) */
   width: number
   /** Which side the hinge is on */
   hingeSide: 'left' | 'right'
@@ -83,10 +83,6 @@ export interface CeilingZone {
 }
 
 export interface GymRoom {
-  /** Room width in feet */
-  width: number
-  /** Room depth in feet */
-  depth: number
   /** Default ceiling height in feet */
   defaultCeilingHeight: number
   /** Budget target in USD */

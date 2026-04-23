@@ -6,7 +6,15 @@
       "Bash(npx vite:*)",
       "Bash(xargs grep *)",
       "Bash(echo \"EXIT: $?\")",
-      "Bash(npx eslint *)"
+      "Bash(npx eslint *)",
+      "Bash(curl -s http://localhost:5173)",
+      "Bash(curl -s http://localhost:5174/src/components/EquipmentCatalog.tsx)",
+      "Read(//tmp/claude/C--Users-Max-source-repos-HomeGymBuildr-home-gym-planner/761a6608-c29a-48c0-ba09-04ceecff375e/tasks/**)",
+      "Bash(cat \"C:\\\\\\\\Users\\\\\\\\Max\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\claude\\\\\\\\C--Users-Max-source-repos-HomeGymBuildr-home-gym-planner\\\\\\\\761a6608-c29a-48c0-ba09-04ceecff375e\\\\\\\\tasks\\\\\\\\b5da49hv0.output\")",
+      "Bash(curl -s http://localhost:5175/)",
+      "Bash(kill %1)",
+      "Bash(jobs -p)",
+      "Bash(xargs -r kill)"
     ]
   }
 }

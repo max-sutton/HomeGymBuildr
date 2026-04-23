@@ -112,23 +112,24 @@ function App() {
         <button className="view-toggle" onClick={() => setView3D((v) => !v)}>
           {view3D ? '2D Plan' : '3D View'}
         </button>
-        {view3D ? (
-          <Suspense fallback={<div style={{ color: '#aaa', textAlign: 'center', paddingTop: 80 }}>Loading 3D view...</div>}>
-            <GymScene3D state={state} />
-          </Suspense>
-        ) : (
-          <FloorPlanGrid
-            state={state}
-            dispatch={dispatch}
-            isDrawMode={isDrawMode}
-            isEraseMode={isEraseMode}
-            isWallMode={isWallMode}
-            isDoorMode={isDoorMode}
-            isCeilingDrawMode={isCeilingDrawMode}
-            ceilingZoneHeight={ceilingZoneHeight}
-            onClearDrawModes={clearDrawModes}
-            snapIncrement={snapIncrement}
-          />
+        <FloorPlanGrid
+          state={state}
+          dispatch={dispatch}
+          isDrawMode={isDrawMode}
+          isEraseMode={isEraseMode}
+          isWallMode={isWallMode}
+          isDoorMode={isDoorMode}
+          isCeilingDrawMode={isCeilingDrawMode}
+          ceilingZoneHeight={ceilingZoneHeight}
+          onClearDrawModes={clearDrawModes}
+          snapIncrement={snapIncrement}
+        />
+        {view3D && (
+          <div className="scene-3d-overlay">
+            <Suspense fallback={<div style={{ color: '#aaa', textAlign: 'center', paddingTop: 80 }}>Loading 3D view...</div>}>
+              <GymScene3D state={state} />
+            </Suspense>
+          </div>
         )}
       </main>
 

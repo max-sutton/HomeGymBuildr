@@ -1,5 +1,8 @@
 import type { PlacedEquipment, Equipment, GymRoom, FloorRegion, Wall, Door } from '../types'
 import { equipmentCatalog } from '../data/equipmentCatalog'
+import { wallCutsRectInterior } from './wallGeom'
+import { doorObstructionCorners } from './doorGeom'
+import { WORLD_SIZE_FT } from './world'
 
 function getEquipment(id: string): Equipment | undefined {
   return equipmentCatalog.find((e) => e.id === id)
@@ -46,8 +49,7 @@ export function checkOverlap(item: PlacedEquipment, placedItems: PlacedEquipment
 /** Check if clearance zones around an item conflict with other items */
 export function checkClearance(
   item: PlacedEquipment,
-  placedItems: PlacedEquipment[],
-  room: GymRoom
+  placedItems: PlacedEquipment[]
 ): boolean {
   const eq = getEquipment(item.equipmentId)
   if (!eq) return false
@@ -61,10 +63,10 @@ export function checkClearance(
     height: dims.depth + eq.clearance * 2,
   }
 
-  // Check clearance extends outside room
+  // Check clearance extends outside the world canvas
   if (clearanceRect.x < 0 || clearanceRect.y < 0) return false
-  if (clearanceRect.x + clearanceRect.width > room.width) return false
-  if (clearanceRect.y + clearanceRect.height > room.depth) return false
+  if (clearanceRect.x + clearanceRect.width > WORLD_SIZE_FT) return false
+  if (clearanceRect.y + clearanceRect.height > WORLD_SIZE_FT) return false
 
   // Check clearance zone overlaps with other items' bodies
   for (const other of placedItems) {
@@ -92,63 +94,75 @@ function isRectOnFloor(rect: Rect, regions: FloorRegion[]): boolean {
   return true
 }
 
-/** Check if a wall cuts through a rectangle's interior */
+/** Check if any wall cuts through a rectangle's interior */
 function wallCutsRect(rect: Rect, walls: Wall[]): boolean {
-  for (const w of walls) {
-    if (w.orientation === 'horizontal') {
-      // Horizontal wall at (w.x, w.y) sits on the line between row w.y-1 and row w.y.
-      // It blocks if the wall's y is strictly inside the rect's vertical span
-      // and the wall's x is within the rect's horizontal span.
-      if (w.y > rect.y && w.y < rect.y + rect.height && w.x >= rect.x && w.x < rect.x + rect.width) {
-        return true
-      }
-    } else {
-      // Vertical wall at (w.x, w.y) sits on the line between col w.x-1 and col w.x.
-      if (w.x > rect.x && w.x < rect.x + rect.width && w.y >= rect.y && w.y < rect.y + rect.height) {
-        return true
-      }
-    }
-  }
-  return false
+  return walls.some((w) => wallCutsRectInterior(w, rect))
 }
 
-/** Get the obstruction rectangle for a door (the swing area extending into the room) */
-export function getDoorObstructionRect(door: Door): Rect {
-  const w = door.width
-  if (door.orientation === 'horizontal') {
-    const y = door.swingSide === 1 ? door.wallLine : door.wallLine - w
-    return { x: door.position, y, width: w, height: w }
-  } else {
-    const x = door.swingSide === 1 ? door.wallLine : door.wallLine - w
-    return { x, y: door.position, width: w, height: w }
+/** SAT test: do a convex polygon (door swing square) and an AABB overlap? */
+function polygonOverlapsRect(corners: readonly (readonly [number, number])[], rect: Rect): boolean {
+  const rectCorners: [number, number][] = [
+    [rect.x, rect.y],
+    [rect.x + rect.width, rect.y],
+    [rect.x + rect.width, rect.y + rect.height],
+    [rect.x, rect.y + rect.height],
+  ]
+
+  // Axes to test: the 2 AABB axes + the polygon's edge normals
+  const axes: [number, number][] = [[1, 0], [0, 1]]
+  for (let i = 0; i < corners.length; i++) {
+    const [ax, ay] = corners[i]
+    const [bx, by] = corners[(i + 1) % corners.length]
+    const ex = bx - ax, ey = by - ay
+    // Perpendicular to edge — no need to normalize for SAT
+    axes.push([-ey, ex])
   }
+
+  const project = (pts: readonly (readonly [number, number])[], ax: number, ay: number) => {
+    let min = Infinity, max = -Infinity
+    for (const [x, y] of pts) {
+      const p = x * ax + y * ay
+      if (p < min) min = p
+      if (p > max) max = p
+    }
+    return [min, max] as const
+  }
+
+  // Strict inequality on both sides: edges that merely touch don't count as
+  // overlap. This matches the axial rect semantics (`rectsOverlap` above) so
+  // equipment can sit flush against a door's swing-area boundary.
+  for (const [ax, ay] of axes) {
+    const [aMin, aMax] = project(corners, ax, ay)
+    const [bMin, bMax] = project(rectCorners, ax, ay)
+    if (aMax <= bMin || bMax <= aMin) return false
+  }
+  return true
 }
 
 /** Check if a rect overlaps with any door obstruction zones */
 function doorBlocksRect(rect: Rect, doors: Door[]): boolean {
   for (const door of doors) {
-    const doorRect = getDoorObstructionRect(door)
-    if (rectsOverlap(rect, doorRect)) return true
+    const corners = doorObstructionCorners(door)
+    if (polygonOverlapsRect(corners, rect)) return true
   }
   return false
 }
 
-/** Check if an item fits entirely within the room bounds */
+/** Check if an item fits entirely within the world canvas and on drawn floor */
 export function isWithinBounds(item: PlacedEquipment, room: GymRoom): boolean {
   const eq = getEquipment(item.equipmentId)
   if (!eq) return false
   const dims = getEffectiveDimensions(item, eq)
 
-  // Must be within the overall grid canvas
+  // Must be within the overall world canvas
   if (item.x < 0 || item.y < 0) return false
-  if (item.x + dims.width > room.width || item.y + dims.depth > room.depth) return false
+  if (item.x + dims.width > WORLD_SIZE_FT || item.y + dims.depth > WORLD_SIZE_FT) return false
 
   const rect: Rect = { x: item.x, y: item.y, width: dims.width, height: dims.depth }
 
-  // If floor regions are defined, item must sit entirely on floor
-  if (room.floorRegions.length > 0) {
-    if (!isRectOnFloor(rect, room.floorRegions)) return false
-  }
+  // Equipment must sit entirely on drawn floor — no floor, no placement
+  if (room.floorRegions.length === 0) return false
+  if (!isRectOnFloor(rect, room.floorRegions)) return false
 
   // Equipment cannot span across a wall
   if (room.walls.length > 0) {

@@ -15,14 +15,21 @@ function heightToColor(ceilingHeight: number, defaultHeight: number): string {
 function CeilingMeshes3D({ room }: Props) {
   return (
     <>
-      {/* Default ceiling — faint wireframe */}
-      <mesh
-        rotation={[-Math.PI / 2, 0, 0]}
-        position={[room.width / 2, room.defaultCeilingHeight, room.depth / 2]}
-      >
-        <planeGeometry args={[room.width, room.depth]} />
-        <meshStandardMaterial color="#4a5568" transparent opacity={0.08} wireframe />
-      </mesh>
+      {/* Default ceiling — one faint wireframe per drawn floor region */}
+      {room.floorRegions.map((region) => (
+        <mesh
+          key={region.id}
+          rotation={[-Math.PI / 2, 0, 0]}
+          position={[
+            region.x + region.width / 2,
+            room.defaultCeilingHeight,
+            region.y + region.height / 2,
+          ]}
+        >
+          <planeGeometry args={[region.width, region.height]} />
+          <meshStandardMaterial color="#4a5568" transparent opacity={0.08} wireframe />
+        </mesh>
+      ))}
 
       {/* Ceiling zones */}
       {room.ceilingZones.map((zone) => (

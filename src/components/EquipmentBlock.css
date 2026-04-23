@@ -9,7 +9,7 @@
   transition: box-shadow 0.15s;
   user-select: none;
   overflow: hidden;
-  z-index: 2;
+  z-index: 5;
 }
 
 .equipment-block:active {

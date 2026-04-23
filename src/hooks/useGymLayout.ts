@@ -1,13 +1,13 @@
 import { useReducer } from 'react'
 import type { GymRoom, PlacedEquipment, FloorRegion, Wall, CeilingZone, Door } from '../types'
 import { SNAP_FINE, coordKey } from '../utils/snap'
+import { wallKey, wallCutsRectInterior } from '../utils/wallGeom'
 
 export interface GymLayoutState {
   room: GymRoom
 }
 
 type Action =
-  | { type: 'SET_ROOM'; payload: { width: number; depth: number } }
   | { type: 'SET_BUDGET'; payload: number }
   | { type: 'PLACE_EQUIPMENT'; payload: PlacedEquipment }
   | { type: 'MOVE_EQUIPMENT'; payload: { instanceId: string; x: number; y: number } }
@@ -19,6 +19,7 @@ type Action =
   | { type: 'CLEAR_FLOOR_REGIONS' }
   | { type: 'TOGGLE_WALL'; payload: Wall }
   | { type: 'ADD_WALLS'; payload: Wall[] }
+  | { type: 'REMOVE_WALLS'; payload: Wall[] }
   | { type: 'CLEAR_WALLS' }
   | { type: 'SET_DEFAULT_CEILING_HEIGHT'; payload: number }
   | { type: 'ADD_CEILING_ZONE'; payload: CeilingZone }
@@ -28,6 +29,7 @@ type Action =
   | { type: 'REMOVE_DOOR'; payload: { id: string } }
   | { type: 'FLIP_DOOR'; payload: { id: string } }
   | { type: 'FLIP_DOOR_SWING'; payload: { id: string } }
+  | { type: 'ROTATE_DOOR'; payload: { id: string } }
   | { type: 'RESIZE_DOOR'; payload: { id: string; width: number; position: number } }
   | { type: 'CLEAR_DOORS' }
 
@@ -35,8 +37,6 @@ export type GymLayoutDispatch = React.Dispatch<Action>
 
 const initialState: GymLayoutState = {
   room: {
-    width: 20,
-    depth: 15,
     budget: 5000,
     defaultCeilingHeight: 8,
     placedEquipment: [],
@@ -107,11 +107,6 @@ function cellsToRegions(cells: Set<string>): FloorRegion[] {
 
 function gymLayoutReducer(state: GymLayoutState, action: Action): GymLayoutState {
   switch (action.type) {
-    case 'SET_ROOM':
-      return {
-        ...state,
-        room: { ...state.room, width: action.payload.width, depth: action.payload.depth },
-      }
     case 'SET_BUDGET':
       return {
         ...state,
@@ -188,16 +183,8 @@ function gymLayoutReducer(state: GymLayoutState, action: Action): GymLayoutState
       }
     }
     case 'ERASE_WALLS_IN_AREA': {
-      const { x, y, width, height } = action.payload
-      const remaining = state.room.walls.filter((w) => {
-        if (w.orientation === 'horizontal') {
-          // Horizontal wall at (wx, wy) spans column wx to wx+1 on grid line wy
-          return !(w.x >= x && w.x < x + width && w.y > y && w.y < y + height)
-        } else {
-          // Vertical wall at (wx, wy) spans row wy to wy+1 on grid line wx
-          return !(w.y >= y && w.y < y + height && w.x > x && w.x < x + width)
-        }
-      })
+      const rect = action.payload
+      const remaining = state.room.walls.filter((w) => !wallCutsRectInterior(w, rect))
       return {
         ...state,
         room: { ...state.room, walls: remaining },
@@ -212,11 +199,8 @@ function gymLayoutReducer(state: GymLayoutState, action: Action): GymLayoutState
         },
       }
     case 'TOGGLE_WALL': {
-      const px = action.payload.x.toFixed(2)
-      const py = action.payload.y.toFixed(2)
-      const existing = state.room.walls.find(
-        (w) => w.x.toFixed(2) === px && w.y.toFixed(2) === py && w.orientation === action.payload.orientation
-      )
+      const targetKey = wallKey(action.payload)
+      const existing = state.room.walls.find((w) => wallKey(w) === targetKey)
       return {
         ...state,
         room: {
@@ -228,18 +212,23 @@ function gymLayoutReducer(state: GymLayoutState, action: Action): GymLayoutState
       }
     }
     case 'ADD_WALLS': {
-      // Add walls that don't already exist (float-safe keys)
-      const existingKeys = new Set(
-        state.room.walls.map((w) => `${w.x.toFixed(2)},${w.y.toFixed(2)},${w.orientation}`)
-      )
-      const newWalls = action.payload.filter(
-        (w) => !existingKeys.has(`${w.x.toFixed(2)},${w.y.toFixed(2)},${w.orientation}`)
-      )
+      const existingKeys = new Set(state.room.walls.map(wallKey))
+      const newWalls = action.payload.filter((w) => !existingKeys.has(wallKey(w)))
       return {
         ...state,
         room: {
           ...state.room,
           walls: [...state.room.walls, ...newWalls],
+        },
+      }
+    }
+    case 'REMOVE_WALLS': {
+      const removeKeys = new Set(action.payload.map(wallKey))
+      return {
+        ...state,
+        room: {
+          ...state.room,
+          walls: state.room.walls.filter((w) => !removeKeys.has(wallKey(w))),
         },
       }
     }
@@ -318,6 +307,23 @@ function gymLayoutReducer(state: GymLayoutState, action: Action): GymLayoutState
               ? { ...d, swingSide: (d.swingSide === 1 ? -1 : 1) as 1 | -1 }
               : d
           ),
+        },
+      }
+    case 'ROTATE_DOOR':
+      return {
+        ...state,
+        room: {
+          ...state.room,
+          doors: state.room.doors.map((d) => {
+            if (d.id !== action.payload.id) return d
+            if (d.hingeSide === 'left' && d.swingSide === 1)
+              return { ...d, hingeSide: 'right' as const }
+            if (d.hingeSide === 'right' && d.swingSide === 1)
+              return { ...d, swingSide: -1 as const }
+            if (d.hingeSide === 'right' && d.swingSide === -1)
+              return { ...d, hingeSide: 'left' as const }
+            return { ...d, swingSide: 1 as const }
+          }),
         },
       }
     case 'RESIZE_DOOR':

@@ -1,8 +1,14 @@
 .floor-plan-wrapper {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   gap: 8px;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 8px 12px 12px;
+  box-sizing: border-box;
 }
 
 .grid-top-bar {
@@ -10,8 +16,8 @@
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  max-width: 720px;
-  padding: 0 4px;
+  padding: 0 100px 0 4px; /* right padding leaves room for the absolute view-toggle button */
+  flex-shrink: 0;
 }
 
 .grid-dimensions {
@@ -62,9 +68,11 @@
 
 .grid-viewport {
   overflow: auto;
-  max-width: 720px;
-  max-height: 720px;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
   border-radius: 6px;
+  scrollbar-gutter: stable;
 }
 
 .floor-area {
@@ -146,7 +154,7 @@
   position: absolute;
   background: rgba(74, 144, 217, 0.6);
   border-radius: 2px;
-  z-index: 2;
+  z-index: 11;
   pointer-events: none;
   transition: opacity 0.2s ease;
   display: flex;
@@ -168,33 +176,33 @@
   white-space: nowrap;
 }
 
-/* Walls */
-.wall-segment {
+/* Walls — unified SVG overlay for axial + diagonal */
+.wall-layer {
   position: absolute;
+  left: 0;
+  top: 0;
   z-index: 3;
   pointer-events: none;
-  border-radius: 1px;
+  overflow: visible;
 }
 
-.wall-segment.horizontal {
-  background: #e6b43c;
+.wall-layer line {
+  stroke: #e6b43c;
+  stroke-width: 4;
+  stroke-linecap: square;
 }
 
-.wall-segment.vertical {
-  background: #e6b43c;
-}
-
-.wall-segment.interactive {
-  pointer-events: auto;
+.wall-layer.interactive line {
+  pointer-events: stroke;
   cursor: pointer;
 }
 
-.wall-segment.interactive:hover {
-  background: var(--danger);
+.wall-layer.interactive line:hover {
+  stroke: var(--danger);
 }
 
-.wall-segment.wall-drag-preview {
-  background: rgba(230, 180, 60, 0.5);
+.wall-layer line.wall-drag-preview {
+  stroke: rgba(230, 180, 60, 0.5);
   pointer-events: none;
   animation: wall-preview-pulse 0.6s ease-in-out infinite alternate;
 }
@@ -336,18 +344,21 @@
 }
 
 /* Doors */
-.door-icon {
+.door-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
   z-index: 4;
   pointer-events: none;
   overflow: visible;
 }
 
-.door-icon.interactive {
+.door-layer.interactive .door-icon {
   pointer-events: auto;
   cursor: pointer;
 }
 
-.door-icon.interactive:hover path {
+.door-layer.interactive .door-icon:hover path {
   stroke: #a0f0dc;
 }
 
@@ -355,14 +366,12 @@
   stroke: #a0f0dc;
 }
 
-.door-selection-outline {
-  position: absolute;
-  z-index: 5;
-  border: 1.5px dashed #a0f0dc;
-  border-radius: 3px;
-  background: rgba(100, 200, 180, 0.06);
+.door-selection-outline-rect {
+  fill: rgba(100, 200, 180, 0.06);
+  stroke: #a0f0dc;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
   pointer-events: none;
-  box-sizing: border-box;
 }
 
 .door-resize-handle {
@@ -372,11 +381,31 @@
   border: 2px solid #a0f0dc;
   border-radius: 2px;
   box-sizing: border-box;
+  cursor: nwse-resize;
 }
 
-.door-resize-handle.resize-ew { cursor: ew-resize; }
-.door-resize-handle.resize-ns { cursor: ns-resize; }
 .door-resize-handle:hover { background: #a0f0dc; }
+
+.door-action-btn {
+  position: absolute;
+  z-index: 6;
+  background: #12122a;
+  border: 1.5px solid #a0f0dc;
+  color: #a0f0dc;
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+}
+.door-action-btn:hover {
+  background: #a0f0dc;
+  color: #12122a;
+}
 
 .door-width-label {
   position: absolute;
