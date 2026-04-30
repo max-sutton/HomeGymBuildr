@@ -37,23 +37,39 @@ export function wallKey(w: Wall): string {
 }
 
 /**
- * Build a unit-length Wall at an (x, y) corner anchor in the given orientation.
- *   horizontal: (x,y)   → (x+1, y)
- *   vertical:   (x,y)   → (x,   y+1)
- *   diag-pos:   (x,y)   → (x+1, y+1)
- *   diag-neg:   (x, y+1) → (x+1, y)   — anchor (x,y) is the bottom-left corner
+ * Build a Wall of length `len` (default 1ft) at an (x, y) corner anchor in the
+ * given orientation. The merger (mergeInteriorWalls) coalesces adjacent runs
+ * regardless of unit length.
+ *   horizontal: (x,y)     → (x+len, y)
+ *   vertical:   (x,y)     → (x,     y+len)
+ *   diag-pos:   (x,y)     → (x+len, y+len)
+ *   diag-neg:   (x, y+len) → (x+len, y)   — anchor (x,y) is the bottom-left corner
  */
-export function makeUnitWall(id: string, x: number, y: number, o: WallOrientation): Wall {
+export function makeUnitWall(id: string, x: number, y: number, o: WallOrientation, len: number = 1): Wall {
   switch (o) {
-    case 'horizontal': return { id, x1: x, y1: y, x2: x + 1, y2: y }
-    case 'vertical':   return { id, x1: x, y1: y, x2: x, y2: y + 1 }
-    case 'diag-pos':   return { id, x1: x, y1: y, x2: x + 1, y2: y + 1 }
-    case 'diag-neg':   return { id, x1: x, y1: y + 1, x2: x + 1, y2: y }
+    case 'horizontal': return { id, x1: x, y1: y, x2: x + len, y2: y }
+    case 'vertical':   return { id, x1: x, y1: y, x2: x, y2: y + len }
+    case 'diag-pos':   return { id, x1: x, y1: y, x2: x + len, y2: y + len }
+    case 'diag-neg':   return { id, x1: x, y1: y + len, x2: x + len, y2: y }
   }
 }
 
 export function wallsEqual(a: Wall, b: Wall): boolean {
   return wallKey(a) === wallKey(b)
+}
+
+const EPS = 0.001
+
+export function wallOnLine(w: Wall, o: WallOrientation, fixed: number): boolean {
+  return wallOrientation(w) === o && Math.abs(wallFixed(w) - fixed) < EPS
+}
+
+export function wallContainsAlong(w: Wall, along: number): boolean {
+  return along >= wallMin(w) - EPS && along <= wallMax(w) + EPS
+}
+
+export function wallRangeWithin(w: Wall, start: number, end: number): boolean {
+  return wallMin(w) >= start - EPS && wallMax(w) <= end + EPS
 }
 
 /**

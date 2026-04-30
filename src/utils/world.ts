@@ -4,7 +4,7 @@ import type { FloorRegion } from '../types'
 export const WORLD_SIZE_FT = 500
 
 /** Pixels per foot at zoom 1.0. Larger value = bigger 1ft squares on screen. */
-export const BASE_CELL_PX = 50
+export const BASE_CELL_PX = 35
 
 /** AABB of the union of drawn floor regions, or null if there are none. */
 export function floorBoundingBox(

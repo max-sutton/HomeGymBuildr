@@ -15,6 +15,7 @@ function App() {
   const { state, dispatch } = useGymLayout()
   const [isDrawMode, setIsDrawMode] = useState(false)
   const [isEraseMode, setIsEraseMode] = useState(false)
+  const [isEraseSectionMode, setIsEraseSectionMode] = useState(false)
   const [isWallMode, setIsWallMode] = useState(false)
   const [isDoorMode, setIsDoorMode] = useState(false)
   const [isCeilingDrawMode, setIsCeilingDrawMode] = useState(false)
@@ -24,17 +25,10 @@ function App() {
   const [shiftHeld, setShiftHeld] = useState(false)
   const snapIncrement = shiftHeld ? (snapLevel === SNAP_COARSE ? SNAP_FINE : SNAP_COARSE) : snapLevel
 
-  useEffect(() => {
-    const down = (e: KeyboardEvent) => { if (e.key === 'Shift') setShiftHeld(true) }
-    const up = (e: KeyboardEvent) => { if (e.key === 'Shift') setShiftHeld(false) }
-    window.addEventListener('keydown', down)
-    window.addEventListener('keyup', up)
-    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up) }
-  }, [])
-
-  const activateMode = (mode: 'draw' | 'erase' | 'wall' | 'door' | 'ceiling') => {
+  const activateMode = (mode: 'draw' | 'erase' | 'erase-section' | 'wall' | 'door' | 'ceiling') => {
     setIsDrawMode((d) => mode === 'draw' ? !d : false)
     setIsEraseMode((d) => mode === 'erase' ? !d : false)
+    setIsEraseSectionMode((d) => mode === 'erase-section' ? !d : false)
     setIsWallMode((d) => mode === 'wall' ? !d : false)
     setIsDoorMode((d) => mode === 'door' ? !d : false)
     setIsCeilingDrawMode((d) => mode === 'ceiling' ? !d : false)
@@ -43,10 +37,22 @@ function App() {
   const clearDrawModes = useCallback(() => {
     setIsDrawMode(false)
     setIsEraseMode(false)
+    setIsEraseSectionMode(false)
     setIsWallMode(false)
     setIsDoorMode(false)
     setIsCeilingDrawMode(false)
   }, [])
+
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setShiftHeld(true)
+      if (e.key === 'Escape') clearDrawModes()
+    }
+    const up = (e: KeyboardEvent) => { if (e.key === 'Shift') setShiftHeld(false) }
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up) }
+  }, [clearDrawModes])
   const [sidebarDragOver, setSidebarDragOver] = useState(false)
   const { handleDragOver: baseDragOver, parseDrop } = useDragAndDrop()
 
@@ -81,18 +87,24 @@ function App() {
         <DrawToolbar
           isDrawMode={isDrawMode}
           isEraseMode={isEraseMode}
+          isEraseSectionMode={isEraseSectionMode}
           isWallMode={isWallMode}
           isDoorMode={isDoorMode}
           onToggleDrawMode={() => activateMode('draw')}
           onToggleEraseMode={() => activateMode('erase')}
+          onToggleEraseSectionMode={() => activateMode('erase-section')}
           onToggleWallMode={() => activateMode('wall')}
           onToggleDoorMode={() => activateMode('door')}
           regionCount={state.room.floorRegions.length}
           wallCount={state.room.walls.length}
           doorCount={state.room.doors.length}
-          onClearRegions={() => dispatch({ type: 'CLEAR_FLOOR_REGIONS' })}
-          onClearWalls={() => dispatch({ type: 'CLEAR_WALLS' })}
-          onClearDoors={() => dispatch({ type: 'CLEAR_DOORS' })}
+          equipmentCount={state.room.placedEquipment.length}
+          onClearAll={() => {
+            dispatch({ type: 'CLEAR_FLOOR_REGIONS' })
+            dispatch({ type: 'CLEAR_WALLS' })
+            dispatch({ type: 'CLEAR_DOORS' })
+            dispatch({ type: 'CLEAR_EQUIPMENT' })
+          }}
           snapLevel={snapLevel}
           onCycleSnap={() => setSnapLevel((v) => nextSnapLevel(v))}
           snapIncrement={snapIncrement}
@@ -117,6 +129,7 @@ function App() {
           dispatch={dispatch}
           isDrawMode={isDrawMode}
           isEraseMode={isEraseMode}
+          isEraseSectionMode={isEraseSectionMode}
           isWallMode={isWallMode}
           isDoorMode={isDoorMode}
           isCeilingDrawMode={isCeilingDrawMode}

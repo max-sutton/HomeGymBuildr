@@ -4,18 +4,19 @@ import './DrawToolbar.css'
 interface Props {
   isDrawMode: boolean
   isEraseMode: boolean
+  isEraseSectionMode: boolean
   isWallMode: boolean
   isDoorMode: boolean
   onToggleDrawMode: () => void
   onToggleEraseMode: () => void
+  onToggleEraseSectionMode: () => void
   onToggleWallMode: () => void
   onToggleDoorMode: () => void
   regionCount: number
   wallCount: number
   doorCount: number
-  onClearRegions: () => void
-  onClearWalls: () => void
-  onClearDoors: () => void
+  equipmentCount: number
+  onClearAll: () => void
   snapLevel: number
   onCycleSnap: () => void
   snapIncrement: number
@@ -24,18 +25,19 @@ interface Props {
 export default function DrawToolbar({
   isDrawMode,
   isEraseMode,
+  isEraseSectionMode,
   isWallMode,
   isDoorMode,
   onToggleDrawMode,
   onToggleEraseMode,
+  onToggleEraseSectionMode,
   onToggleWallMode,
   onToggleDoorMode,
   regionCount,
   wallCount,
   doorCount,
-  onClearRegions,
-  onClearWalls,
-  onClearDoors,
+  equipmentCount,
+  onClearAll,
   snapLevel,
   onCycleSnap,
   snapIncrement,
@@ -57,13 +59,25 @@ export default function DrawToolbar({
         <button
           className={`draw-toggle erase-toggle ${isEraseMode ? 'active' : ''}`}
           onClick={onToggleEraseMode}
-          disabled={regionCount === 0}
+          disabled={regionCount === 0 && wallCount === 0 && doorCount === 0 && equipmentCount === 0}
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
             <path d="M3 13h10" />
             <path d="M5.5 11L11 5.5a1.5 1.5 0 0 0 0-2.12l-.88-.88a1.5 1.5 0 0 0-2.12 0L2.5 8a1.5 1.5 0 0 0 0 2.12L4 11.5" />
           </svg>
           {isEraseMode ? 'Erasing...' : 'Erase'}
+        </button>
+        <button
+          className={`draw-toggle erase-toggle ${isEraseSectionMode ? 'active' : ''}`}
+          onClick={onToggleEraseSectionMode}
+          disabled={regionCount === 0}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <rect x="2" y="2" width="12" height="12" rx="1" />
+            <path d="M2 2 L14 14" />
+            <path d="M4 12 L12 12 L12 4 Z" fill="currentColor" opacity="0.3" />
+          </svg>
+          {isEraseSectionMode ? 'Sectioning...' : 'Erase Section'}
         </button>
         <button
           className={`draw-toggle wall-toggle ${isWallMode ? 'active' : ''}`}
@@ -110,7 +124,10 @@ export default function DrawToolbar({
         <p className="draw-hint">Click and drag on the grid to draw floor regions</p>
       )}
       {isEraseMode && (
-        <p className="draw-hint erase-hint">Click or drag to erase floor cells and walls</p>
+        <p className="draw-hint erase-hint">Click an item to remove it. Drag to wipe everything in an area.</p>
+      )}
+      {isEraseSectionMode && (
+        <p className="draw-hint erase-hint">Click inside a wall-bounded area to erase just that section. Walls are kept.</p>
       )}
       {isWallMode && (
         <p className="draw-hint wall-hint">Click a grid edge to place or remove a wall</p>
@@ -120,22 +137,17 @@ export default function DrawToolbar({
           Click a wall to place. Click a door to select. Drag the corner to resize. F flip &middot; R rotate &middot; Delete remove.
         </p>
       )}
-      {regionCount > 0 && (
+      {(regionCount > 0 || wallCount > 0 || doorCount > 0 || equipmentCount > 0) && (
         <div className="region-info">
-          <span>{regionCount} region{regionCount !== 1 ? 's' : ''}</span>
-          <button className="clear-btn" onClick={onClearRegions}>Clear</button>
-        </div>
-      )}
-      {wallCount > 0 && (
-        <div className="region-info">
-          <span>{wallCount} wall{wallCount !== 1 ? 's' : ''}</span>
-          <button className="clear-btn" onClick={onClearWalls}>Clear</button>
-        </div>
-      )}
-      {doorCount > 0 && (
-        <div className="region-info">
-          <span>{doorCount} door{doorCount !== 1 ? 's' : ''}</span>
-          <button className="clear-btn" onClick={onClearDoors}>Clear</button>
+          <span>
+            {[
+              regionCount > 0 && `${regionCount} region${regionCount !== 1 ? 's' : ''}`,
+              wallCount > 0 && `${wallCount} wall${wallCount !== 1 ? 's' : ''}`,
+              doorCount > 0 && `${doorCount} door${doorCount !== 1 ? 's' : ''}`,
+              equipmentCount > 0 && `${equipmentCount} equipment`,
+            ].filter(Boolean).join(' · ')}
+          </span>
+          <button className="clear-btn" onClick={onClearAll}>Clear all</button>
         </div>
       )}
     </div>

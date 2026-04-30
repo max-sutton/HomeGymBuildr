@@ -1,6 +1,7 @@
-import type { Wall } from '../types'
+import type { Wall, Door, FloorRegion } from '../types'
 import { snapFloor } from './snap'
-import { wallOrientation, wallFixed, wallMin, type WallOrientation } from './wallGeom'
+import { wallOrientation, wallFixed, wallMin, wallMax, type WallOrientation } from './wallGeom'
+import { computeFloorEdges } from './floorEdges'
 
 /** A merged wall segment — can be perimeter edge or interior wall */
 export interface WallSegment {
@@ -49,10 +50,10 @@ export function getAllWallSegments(
 }
 
 /**
- * Merge a list of unit-length walls into longer contiguous segments.
- * Walls are grouped by orientation and by the line parameter `wallFixed`;
- * within each group, adjacent units (gap ≤ 1) collapse into one segment.
- * Used for both committed walls and the drag preview.
+ * Merge walls (any length) into longer contiguous segments. Walls are grouped
+ * by orientation and by the line parameter `wallFixed`; within each group,
+ * overlapping or touching ranges [wallMin, wallMax] coalesce. Used for both
+ * committed walls and the drag preview.
  */
 export function mergeInteriorWalls(walls: Wall[]): WallSegment[] {
   const out: WallSegment[] = []
@@ -60,25 +61,26 @@ export function mergeInteriorWalls(walls: Wall[]): WallSegment[] {
   for (const orient of orientations) {
     const group = walls.filter((w) => wallOrientation(w) === orient)
     if (group.length === 0) continue
-    const byFixed = new Map<string, number[]>()
+    const byFixed = new Map<string, Array<[number, number]>>()
     for (const w of group) {
       const key = wallFixed(w).toFixed(4)
       let arr = byFixed.get(key)
       if (!arr) { arr = []; byFixed.set(key, arr) }
-      arr.push(wallMin(w))
+      arr.push([wallMin(w), wallMax(w)])
     }
-    for (const [fixedKey, vars] of byFixed) {
-      vars.sort((a, b) => a - b)
+    for (const [fixedKey, ranges] of byFixed) {
+      ranges.sort((a, b) => a[0] - b[0])
       const fixed = Number(fixedKey)
-      let start = vars[0]
-      let end = vars[0] + 1
-      for (let i = 1; i < vars.length; i++) {
-        if (vars[i] - (end - 1) <= 1.001) {
-          end = vars[i] + 1
+      let start = ranges[0][0]
+      let end = ranges[0][1]
+      for (let i = 1; i < ranges.length; i++) {
+        const [s, e] = ranges[i]
+        if (s - end <= 0.001) {
+          if (e > end) end = e
         } else {
           out.push({ orientation: orient, fixed, start, end, isPerimeter: false })
-          start = vars[i]
-          end = vars[i] + 1
+          start = s
+          end = e
         }
       }
       out.push({ orientation: orient, fixed, start, end, isPerimeter: false })
@@ -176,4 +178,23 @@ export function findNearestWallSegment(
   }
 
   return best
+}
+
+/** Find the wall segment a door sits on. Returns null if no segment supports it. */
+export function findDoorSegment(door: Door, segments: WallSegment[]): WallSegment | null {
+  for (const seg of segments) {
+    if (seg.orientation !== door.orientation) continue
+    if (Math.abs(seg.fixed - door.wallLine) > 0.01) continue
+    if (door.position < seg.start - 0.001) continue
+    if (door.position + door.width > seg.end + 0.001) continue
+    return seg
+  }
+  return null
+}
+
+/** True iff the door still has a wall (perimeter or interior) under it. */
+export function isDoorAttached(door: Door, walls: Wall[], floorRegions: FloorRegion[]): boolean {
+  const { edgeRuns } = computeFloorEdges(floorRegions)
+  const segments = getAllWallSegments(walls, edgeRuns)
+  return findDoorSegment(door, segments) !== null
 }

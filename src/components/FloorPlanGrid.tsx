@@ -6,33 +6,22 @@ import { CATEGORY_COLORS } from '../types'
 import type { Door, Wall } from '../types'
 import { snapToGrid, snapFloor, formatDimension, SNAP_FINE } from '../utils/snap'
 import { checkOverlap, isWithinBounds, getEffectiveDimensions } from '../utils/collision'
-import { getAllWallSegments, findNearestWallSegment, mergeInteriorWalls, segmentEndpoints } from '../utils/wallSegments'
-import type { WallSegment } from '../utils/wallSegments'
-import { wallKey, makeUnitWall, type WallOrientation } from '../utils/wallGeom'
+import { getAllWallSegments, findNearestWallSegment, findDoorSegment, mergeInteriorWalls, segmentEndpoints } from '../utils/wallSegments'
+import { makeUnitWall, wallOnLine, wallContainsAlong, wallRangeWithin, type WallOrientation } from '../utils/wallGeom'
 import { doorGeometry, doorHingeAlong, doorBoundsAABB } from '../utils/doorGeom'
 import { computeFloorEdges } from '../utils/floorEdges'
 import type { EdgeRun } from '../utils/floorEdges'
+import { floodFillRegion, diagonalFloorFills } from '../utils/regionFlood'
 import { WORLD_SIZE_FT, BASE_CELL_PX } from '../utils/world'
 import EquipmentBlock from './EquipmentBlock'
 import './FloorPlanGrid.css'
-
-/** Find the wall segment a door sits on, so we can clamp resize to it. */
-function findDoorSegment(door: Door, segments: WallSegment[]): WallSegment | null {
-  for (const seg of segments) {
-    if (seg.orientation !== door.orientation) continue
-    if (Math.abs(seg.fixed - door.wallLine) > 0.01) continue
-    if (door.position < seg.start - 0.001) continue
-    if (door.position + door.width > seg.end + 0.001) continue
-    return seg
-  }
-  return null
-}
 
 interface Props {
   state: GymLayoutState
   dispatch: GymLayoutDispatch
   isDrawMode: boolean
   isEraseMode: boolean
+  isEraseSectionMode: boolean
   isWallMode: boolean
   isDoorMode: boolean
   isCeilingDrawMode: boolean
@@ -62,7 +51,7 @@ interface DrawPreview {
   endY: number
 }
 
-export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode, isWallMode, isDoorMode, isCeilingDrawMode, ceilingZoneHeight, onClearDrawModes, snapIncrement }: Props) {
+export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode, isEraseSectionMode, isWallMode, isDoorMode, isCeilingDrawMode, ceilingZoneHeight, onClearDrawModes, snapIncrement }: Props) {
   const { room } = state
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const { handleDragOver: baseDragOver, parseDrop } = useDragAndDrop()
@@ -168,6 +157,42 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
     [wallSegments]
   )
 
+  // Triangle fills that close the stair-step gap between 45° walls and the
+  // axis-aligned floor cell edges on whichever side has adjacent floor.
+  const diagFills = useMemo(
+    () => diagonalFloorFills(room.walls, room.floorRegions),
+    [room.walls, room.floorRegions]
+  )
+
+  // Perimeter edges with the stair-step segments along diagonal walls removed.
+  // Each diagonal triangle fill has 2 axis-aligned edges (the wall is the third);
+  // those edges coincide with perimeter edges on the kept floor side and would
+  // otherwise be drawn as a stair-step pattern over the triangle fill. Hiding
+  // them lets the wall itself serve as the visual boundary.
+  const visiblePerimeterEdges = useMemo(() => {
+    if (diagFills.length === 0) return perimeterEdges
+    const hidden = new Set<string>()
+    const tol = 1e-4
+    for (const tri of diagFills) {
+      const pts = tri.points
+      for (let i = 0; i < 3; i++) {
+        const a = pts[i]
+        const b = pts[(i + 1) % 3]
+        if (Math.abs(a.y - b.y) < tol && Math.abs(a.x - b.x) > tol) {
+          hidden.add(`h-${Math.min(a.x, b.x).toFixed(4)}-${a.y.toFixed(4)}`)
+        } else if (Math.abs(a.x - b.x) < tol && Math.abs(a.y - b.y) > tol) {
+          hidden.add(`v-${a.x.toFixed(4)}-${Math.min(a.y, b.y).toFixed(4)}`)
+        }
+      }
+    }
+    return perimeterEdges.filter((e) => {
+      const k = e.orientation === 'horizontal'
+        ? `h-${e.x.toFixed(4)}-${e.y.toFixed(4)}`
+        : `v-${e.x.toFixed(4)}-${e.y.toFixed(4)}`
+      return !hidden.has(k)
+    })
+  }, [perimeterEdges, diagFills])
+
   // Merged drag-preview segment(s) — normally one run, but mergeInteriorWalls handles
   // the general case if preview ever contains multiple disjoint groups.
   const previewSegments = useMemo(
@@ -195,7 +220,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
 
   const handleDimensionHover = useCallback(
     (e: React.MouseEvent) => {
-      if (isDrawing.current || isDrawMode || isEraseMode || isWallMode || isDoorMode || isCeilingDrawMode) {
+      if (isDrawing.current || isDrawMode || isEraseMode || isEraseSectionMode || isWallMode || isDoorMode || isCeilingDrawMode) {
         if (hoveredFloorRun) setHoveredFloorRun(null)
         if (hoveredEquipRun) setHoveredEquipRun(null)
         return
@@ -234,7 +259,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
       if (bestFloor !== hoveredFloorRun) setHoveredFloorRun(bestFloor)
       if (bestEquip !== hoveredEquipRun) setHoveredEquipRun(bestEquip)
     },
-    [edgeRuns, equipmentEdgeRuns, toFractionalGrid, isDrawMode, isEraseMode, isWallMode, isDoorMode, isCeilingDrawMode, hasFloorRegions, hoveredFloorRun, hoveredEquipRun]
+    [edgeRuns, equipmentEdgeRuns, toFractionalGrid, isDrawMode, isEraseMode, isEraseSectionMode, isWallMode, isDoorMode, isCeilingDrawMode, hasFloorRegions, hoveredFloorRun, hoveredEquipRun]
   )
 
   // --- Mouse handlers for draw/erase/wall-drag mode ---
@@ -248,6 +273,13 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         isDrawing.current = true
         return
       }
+      if (isEraseSectionMode) {
+        // Single-click only — capture the click point and let mouseUp run flood fill.
+        e.preventDefault()
+        eraseClickFractional.current = toFractionalGrid(e.clientX, e.clientY)
+        isDrawing.current = true
+        return
+      }
       if (!isDrawMode && !isEraseMode && !isCeilingDrawMode) return
       e.preventDefault()
       const { gx, gy } = toGridCoords(e.clientX, e.clientY)
@@ -257,7 +289,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         eraseClickFractional.current = toFractionalGrid(e.clientX, e.clientY)
       }
     },
-    [isDrawMode, isEraseMode, isWallMode, isCeilingDrawMode, toGridCoords, toFractionalGrid]
+    [isDrawMode, isEraseMode, isEraseSectionMode, isWallMode, isCeilingDrawMode, toGridCoords, toFractionalGrid]
   )
 
   const handleMouseMove = useCallback(
@@ -265,16 +297,17 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
       if (!isDrawing.current) return
       if (wallDragStart.current) {
         // Wall drag: snap drag direction to nearest 45° multiple (8 directions).
-        // Start corner is the nearest integer grid corner to the mousedown point.
+        // Start corner snaps to the active snap increment (1ft, 6", 3", or 1").
+        const s = snapIncrement
         const { fx, fy } = toFractionalGrid(e.clientX, e.clientY)
         const { fx: startFx, fy: startFy } = wallDragStart.current
-        const startCx = Math.round(startFx)
-        const startCy = Math.round(startFy)
+        const startCx = Math.round(startFx / s) * s
+        const startCy = Math.round(startFy / s) * s
         const dx = fx - startCx
         const dy = fy - startCy
 
         // Not moved far enough yet — wait for a direction before showing preview
-        if (Math.hypot(dx, dy) < 0.3) { setWallDragPreview([]); return }
+        if (Math.hypot(dx, dy) < Math.max(0.3, s)) { setWallDragPreview([]); return }
 
         const angle = Math.atan2(dy, dx)
         const step = Math.PI / 4
@@ -292,25 +325,22 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         ]
         const { sx, sy, o } = dirs[snappedIdx]
 
-        // Project cursor displacement onto the snapped direction.
-        // Divide by |(sx,sy)|² so `n` is the number of unit-direction steps:
-        //   axial:    |(sx,sy)|² = 1 → n = dx (or dy)
-        //   diagonal: |(sx,sy)|² = 2 → n = (dx·sx + dy·sy)/2
+        // Project cursor displacement onto the snapped direction (in s-step units).
+        // dirLen2 normalises for diagonals (|(±1,±1)|² = 2).
         const dirLen2 = sx * sx + sy * sy
-        const projLen = (sx * dx + sy * dy) / dirLen2
+        const projLen = (sx * dx + sy * dy) / dirLen2 / s
         const n = Math.max(1, Math.floor(projLen + 0.0001))
 
-        // Build n unit walls stepping from the start corner along (sx, sy).
-        // Each step's two corners are (cx, cy) and (cx+sx, cy+sy); the anchor for
-        // makeUnitWall is the min-x / min-y corner of that pair (this is the canonical
-        // form regardless of orientation).
+        // Build n s-length walls stepping from the start corner along (sx, sy).
+        // Each step displaces (sx*s, sy*s); anchor is the min-x/min-y corner of
+        // that step's two endpoints.
         const preview: Wall[] = []
         for (let i = 0; i < n; i++) {
-          const cx = startCx + i * sx
-          const cy = startCy + i * sy
-          const ax = sx > 0 ? cx : cx + sx  // min(cx, cx+sx)
-          const ay = sy > 0 ? cy : cy + sy  // min(cy, cy+sy)
-          const w = makeUnitWall(`preview-${i}`, ax, ay, o)
+          const cx = startCx + i * sx * s
+          const cy = startCy + i * sy * s
+          const ax = sx > 0 ? cx : cx + sx * s
+          const ay = sy > 0 ? cy : cy + sy * s
+          const w = makeUnitWall(`preview-${i}`, ax, ay, o, s)
 
           // Bounds: keep the wall's bounding box inside the world canvas.
           const minX = Math.min(w.x1, w.x2)
@@ -329,7 +359,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
       const { gx, gy } = toGridCoords(e.clientX, e.clientY)
       setDrawPreview((prev) => (prev ? { ...prev, endX: gx, endY: gy } : null))
     },
-    [drawPreview, toGridCoords, toFractionalGrid]
+    [drawPreview, toGridCoords, toFractionalGrid, snapIncrement]
   )
 
   const handleMouseUp = useCallback(() => {
@@ -353,6 +383,22 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
       return
     }
 
+    // Erase-section release: flood-fill the wall-bounded sub-area under the click.
+    if (isEraseSectionMode) {
+      isDrawing.current = false
+      const click = eraseClickFractional.current
+      if (click) {
+        const cellX = snapFloor(click.fx, SNAP_FINE)
+        const cellY = snapFloor(click.fy, SNAP_FINE)
+        const filled = floodFillRegion(cellX, cellY, room.floorRegions, room.walls)
+        if (filled.size > 0) {
+          dispatch({ type: 'ERASE_FLOOR_CELLS', payload: { cellKeys: [...filled] } })
+        }
+        eraseClickFractional.current = null
+      }
+      return
+    }
+
     if (!drawPreview) return
     isDrawing.current = false
     const rect = previewToRect(drawPreview)
@@ -369,41 +415,67 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
         },
       })
     } else if (isEraseMode) {
-      dispatch({ type: 'ERASE_FLOOR_AREA', payload: rect })
-      if (rect.width <= snapIncrement && rect.height <= snapIncrement && eraseClickFractional.current) {
-        // Single cell click — detect nearest wall by proximity
-        const { fx, fy } = eraseClickFractional.current
-        const nearestHY = snapToGrid(fy, snapIncrement)
-        const nearestVX = snapToGrid(fx, snapIncrement)
-        const distH = Math.abs(fy - nearestHY)
-        const distV = Math.abs(fx - nearestVX)
-
-        let wallX: number, wallY: number, orientation: 'horizontal' | 'vertical'
-        if (distH < distV) {
-          orientation = 'horizontal'
-          wallX = Math.floor(fx)
-          wallY = nearestHY
+      const isSingleClick = rect.width <= snapIncrement && rect.height <= snapIncrement && eraseClickFractional.current
+      if (isSingleClick) {
+        // Hit-test priority: equipment → door → wall → floor cell.
+        // First match wins; equipment/door hits skip the floor-cell erase so the
+        // user removes only the thing under the cursor.
+        const { fx, fy } = eraseClickFractional.current!
+        const hitEquip = room.placedEquipment.find((p) => {
+          const eq = equipmentCatalog.find((e) => e.id === p.equipmentId)
+          if (!eq) return false
+          const dims = getEffectiveDimensions(p, eq)
+          return fx >= p.x && fx < p.x + dims.width && fy >= p.y && fy < p.y + dims.depth
+        })
+        if (hitEquip) {
+          dispatch({ type: 'REMOVE_EQUIPMENT', payload: { instanceId: hitEquip.instanceId } })
         } else {
-          orientation = 'vertical'
-          wallX = nearestVX
-          wallY = Math.floor(fy)
-        }
+          const hitDoor = room.doors.find((d) => {
+            const a = doorBoundsAABB(d)
+            return fx >= a.x && fx < a.x + a.width && fy >= a.y && fy < a.y + a.height
+          })
+          if (hitDoor) {
+            dispatch({ type: 'REMOVE_DOOR', payload: { id: hitDoor.id } })
+          } else {
+            // Empty floor / wall click — erase the cell, then try to toggle a nearby wall.
+            dispatch({ type: 'ERASE_FLOOR_AREA', payload: rect })
+            const s = snapIncrement
+            const nearestHY = snapToGrid(fy, s)
+            const nearestVX = snapToGrid(fx, s)
+            const distH = Math.abs(fy - nearestHY)
+            const distV = Math.abs(fx - nearestVX)
 
-        // Keep within the world canvas
-        const valid = orientation === 'horizontal'
-          ? (wallY >= 0 && wallY <= WORLD_SIZE_FT && wallX >= 0 && wallX < WORLD_SIZE_FT)
-          : (wallX >= 0 && wallX <= WORLD_SIZE_FT && wallY >= 0 && wallY < WORLD_SIZE_FT)
+            let wallX: number, wallY: number, orientation: 'horizontal' | 'vertical'
+            if (distH < distV) {
+              orientation = 'horizontal'
+              wallX = snapFloor(fx, s)
+              wallY = nearestHY
+            } else {
+              orientation = 'vertical'
+              wallX = nearestVX
+              wallY = snapFloor(fy, s)
+            }
 
-        if (valid && Math.min(distH, distV) < 0.35) {
-          const targetKey = wallKey(makeUnitWall('', wallX, wallY, orientation))
-          const existing = room.walls.find((w) => wallKey(w) === targetKey)
-          if (existing) {
-            dispatch({ type: 'TOGGLE_WALL', payload: existing })
+            const valid = orientation === 'horizontal'
+              ? (wallY >= 0 && wallY <= WORLD_SIZE_FT && wallX >= 0 && wallX < WORLD_SIZE_FT)
+              : (wallX >= 0 && wallX <= WORLD_SIZE_FT && wallY >= 0 && wallY < WORLD_SIZE_FT)
+
+            if (valid && Math.min(distH, distV) < 0.35) {
+              const fixed = orientation === 'horizontal' ? wallY : wallX
+              const along = orientation === 'horizontal' ? wallX + s / 2 : wallY + s / 2
+              const existing = room.walls.find((w) => wallOnLine(w, orientation, fixed) && wallContainsAlong(w, along))
+              if (existing) {
+                dispatch({ type: 'TOGGLE_WALL', payload: existing })
+              }
+            }
           }
         }
-      } else if (rect.width > snapIncrement || rect.height > snapIncrement) {
-        // Multi-cell selection — erase all walls within the area
+      } else {
+        // Multi-cell drag-rect — wipe floor, walls, doors, and equipment in the area.
+        dispatch({ type: 'ERASE_FLOOR_AREA', payload: rect })
         dispatch({ type: 'ERASE_WALLS_IN_AREA', payload: rect })
+        dispatch({ type: 'REMOVE_DOORS_IN_AREA', payload: rect })
+        dispatch({ type: 'REMOVE_EQUIPMENT_IN_AREA', payload: rect })
       }
       eraseClickFractional.current = null
     } else {
@@ -413,7 +485,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
       })
     }
     setDrawPreview(null)
-  }, [drawPreview, dispatch, isEraseMode, isCeilingDrawMode, ceilingZoneHeight, snapIncrement])
+  }, [drawPreview, dispatch, isEraseMode, isEraseSectionMode, isCeilingDrawMode, ceilingZoneHeight, snapIncrement, room])
 
   useEffect(() => {
     const handler = () => {
@@ -425,10 +497,21 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
 
   // Auto-exit erase mode when nothing left to erase
   useEffect(() => {
-    if (isEraseMode && room.floorRegions.length === 0 && room.walls.length === 0) {
+    if (
+      isEraseMode &&
+      room.floorRegions.length === 0 &&
+      room.walls.length === 0 &&
+      room.doors.length === 0 &&
+      room.placedEquipment.length === 0
+    ) {
       onClearDrawModes()
     }
-  }, [isEraseMode, room.floorRegions.length, room.walls.length, onClearDrawModes])
+  }, [isEraseMode, room.floorRegions.length, room.walls.length, room.doors.length, room.placedEquipment.length, onClearDrawModes])
+
+  // Auto-exit erase-section mode when no floor remains to section
+  useEffect(() => {
+    if (isEraseSectionMode && room.floorRegions.length === 0) onClearDrawModes()
+  }, [isEraseSectionMode, room.floorRegions.length, onClearDrawModes])
 
   // --- Drag preview handler ---
   const handleDragOver = useCallback(
@@ -492,40 +575,41 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
     (e: React.MouseEvent) => {
       if (!isWallMode) return
       e.preventDefault()
+      const s = snapIncrement
       const { fx, fy } = toFractionalGrid(e.clientX, e.clientY)
 
       // Distance to nearest horizontal and vertical grid lines
-      const nearestHY = snapToGrid(fy, snapIncrement)
-      const nearestVX = snapToGrid(fx, snapIncrement)
+      const nearestHY = snapToGrid(fy, s)
+      const nearestVX = snapToGrid(fx, s)
       const distH = Math.abs(fy - nearestHY)
       const distV = Math.abs(fx - nearestVX)
 
       let wallX: number, wallY: number, orientation: 'horizontal' | 'vertical'
 
       if (distH < distV) {
-        // Closer to a horizontal grid line
+        // Closer to a horizontal grid line — anchor along x at the snap-aligned cell
         orientation = 'horizontal'
-        wallX = Math.floor(fx)
+        wallX = snapFloor(fx, s)
         wallY = nearestHY
       } else {
         // Closer to a vertical grid line
         orientation = 'vertical'
         wallX = nearestVX
-        wallY = Math.floor(fy)
+        wallY = snapFloor(fy, s)
       }
 
       // Don't allow walls outside the world canvas
       if (orientation === 'horizontal') {
         if (wallY < 0 || wallY > WORLD_SIZE_FT) return
-        if (wallX < 0 || wallX >= WORLD_SIZE_FT) return
+        if (wallX < 0 || wallX + s > WORLD_SIZE_FT + 0.001) return
       } else {
         if (wallX < 0 || wallX > WORLD_SIZE_FT) return
-        if (wallY < 0 || wallY >= WORLD_SIZE_FT) return
+        if (wallY < 0 || wallY + s > WORLD_SIZE_FT + 0.001) return
       }
 
       dispatch({
         type: 'TOGGLE_WALL',
-        payload: makeUnitWall(`wall-${wallX}-${wallY}-${orientation}`, wallX, wallY, orientation),
+        payload: makeUnitWall(`wall-${wallX}-${wallY}-${orientation}`, wallX, wallY, orientation, s),
       })
     },
     [isWallMode, toFractionalGrid, dispatch, snapIncrement]
@@ -724,7 +808,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
   }, [])
 
   const previewRect = drawPreview ? previewToRect(drawPreview) : null
-  const gridModeClass = isDrawMode ? 'draw-mode' : isEraseMode ? 'erase-mode' : isWallMode ? 'wall-mode' : isDoorMode ? 'door-mode' : isCeilingDrawMode ? 'ceiling-mode' : ''
+  const gridModeClass = isDrawMode ? 'draw-mode' : isEraseMode ? 'erase-mode' : isEraseSectionMode ? 'erase-mode' : isWallMode ? 'wall-mode' : isDoorMode ? 'door-mode' : isCeilingDrawMode ? 'ceiling-mode' : ''
 
   return (
     <div className="floor-plan-wrapper">
@@ -754,7 +838,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
           }),
         }}
         onDragOver={(e: React.DragEvent) => {
-          if (isDrawMode || isEraseMode || isWallMode || isDoorMode || isCeilingDrawMode) {
+          if (isDrawMode || isEraseMode || isEraseSectionMode || isWallMode || isDoorMode || isCeilingDrawMode) {
             onClearDrawModes()
           }
           handleDragOver(e)
@@ -768,7 +852,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
             return
           }
           if (isDoorMode) { handleDoorClick(e); return }
-          if (!isDrawMode && !isEraseMode) setSelectedId(null)
+          if (!isDrawMode && !isEraseMode && !isEraseSectionMode) setSelectedId(null)
         }}
         onMouseDown={handleMouseDown}
         onMouseMove={(e) => { handleMouseMove(e); handleDimensionHover(e) }}
@@ -795,8 +879,21 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
               />
             ))}
 
+            {/* Triangle fills along 45° walls — close the stair-step gap left
+                by the cell grid on the kept side of a diagonal cut. */}
+            {diagFills.length > 0 && (
+              <svg className="floor-diag-fill" width={gridWidth} height={gridHeight}>
+                {diagFills.map((tri) => (
+                  <polygon
+                    key={tri.key}
+                    points={tri.points.map((p) => `${p.x * cellSize},${p.y * cellSize}`).join(' ')}
+                  />
+                ))}
+              </svg>
+            )}
+
             {/* Perimeter border lines — only on outer edges of the combined floor */}
-            {perimeterEdges.map((edge, i) => (
+            {visiblePerimeterEdges.map((edge, i) => (
               <div
                 key={i}
                 className="perimeter-edge"
@@ -886,19 +983,15 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
                 y2={p.y2 * cellSize}
                 onClick={isWallMode ? (e) => {
                   e.stopPropagation()
-                  // Remove every unit wall along the merged run in one dispatch.
-                  const units: Wall[] = []
-                  for (let a = Math.floor(seg.start); a < seg.end - 0.001; a++) {
-                    let ax: number, ay: number
-                    switch (seg.orientation) {
-                      case 'horizontal': ax = a; ay = seg.fixed; break
-                      case 'vertical':   ax = seg.fixed; ay = a; break
-                      case 'diag-pos':   ax = a; ay = a + seg.fixed; break
-                      case 'diag-neg':   ax = a; ay = seg.fixed - a - 1; break
-                    }
-                    units.push(makeUnitWall('', ax, ay, seg.orientation))
+                  // Remove every wall whose [min, max] range falls within this merged
+                  // run, regardless of unit length (1ft auto walls or fine-snap units).
+                  const matching = room.walls.filter((w) =>
+                    wallOnLine(w, seg.orientation, seg.fixed) &&
+                    wallRangeWithin(w, seg.start, seg.end)
+                  )
+                  if (matching.length > 0) {
+                    dispatch({ type: 'REMOVE_WALLS', payload: matching })
                   }
-                  dispatch({ type: 'REMOVE_WALLS', payload: units })
                 } : undefined}
               />
             )
@@ -1105,6 +1198,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
             selected={selectedId === placed.instanceId}
             onSelect={setSelectedId}
             room={room}
+            isEraseMode={isEraseMode}
           />
         ))}
       </div>

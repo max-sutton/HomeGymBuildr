@@ -2,6 +2,18 @@ import { useReducer } from 'react'
 import type { GymRoom, PlacedEquipment, FloorRegion, Wall, CeilingZone, Door } from '../types'
 import { SNAP_FINE, coordKey } from '../utils/snap'
 import { wallKey, wallCutsRectInterior } from '../utils/wallGeom'
+import { rectPerimeterWalls } from '../utils/perimeterWalls'
+import { isDoorAttached } from '../utils/wallSegments'
+import { doorBoundsAABB } from '../utils/doorGeom'
+import { equipmentCatalog } from '../data/equipmentCatalog'
+import { getEffectiveDimensions } from '../utils/collision'
+import { regionsToCells, cellsToRegions } from '../utils/regionFlood'
+
+let wallBaseIdCounter = 0
+function nextWallBaseId(): string {
+  wallBaseIdCounter += 1
+  return `${Date.now()}-${wallBaseIdCounter}`
+}
 
 export interface GymLayoutState {
   room: GymRoom
@@ -15,8 +27,12 @@ type Action =
   | { type: 'REMOVE_EQUIPMENT'; payload: { instanceId: string } }
   | { type: 'ADD_FLOOR_REGION'; payload: { x: number; y: number; width: number; height: number } }
   | { type: 'ERASE_FLOOR_AREA'; payload: { x: number; y: number; width: number; height: number } }
+  | { type: 'ERASE_FLOOR_CELLS'; payload: { cellKeys: string[] } }
   | { type: 'ERASE_WALLS_IN_AREA'; payload: { x: number; y: number; width: number; height: number } }
+  | { type: 'REMOVE_DOORS_IN_AREA'; payload: { x: number; y: number; width: number; height: number } }
+  | { type: 'REMOVE_EQUIPMENT_IN_AREA'; payload: { x: number; y: number; width: number; height: number } }
   | { type: 'CLEAR_FLOOR_REGIONS' }
+  | { type: 'CLEAR_EQUIPMENT' }
   | { type: 'TOGGLE_WALL'; payload: Wall }
   | { type: 'ADD_WALLS'; payload: Wall[] }
   | { type: 'REMOVE_WALLS'; payload: Wall[] }
@@ -47,62 +63,14 @@ const initialState: GymLayoutState = {
   },
 }
 
-/** Convert floor regions to a set of cell keys (quarter-foot resolution) */
-function regionsToCells(regions: FloorRegion[]): Set<string> {
-  const cells = new Set<string>()
-  const step = SNAP_FINE
-  for (const r of regions) {
-    for (let x = r.x; x < r.x + r.width - step / 2; x += step) {
-      for (let y = r.y; y < r.y + r.height - step / 2; y += step) {
-        cells.add(coordKey(x, y))
-      }
-    }
-  }
-  return cells
+interface AABB { x: number; y: number; width: number; height: number }
+
+function rectsOverlap(a: AABB, b: AABB): boolean {
+  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
 }
 
-/** Convert a cell set into optimised non-overlapping rectangles (greedy row scan) */
-function cellsToRegions(cells: Set<string>): FloorRegion[] {
-  if (cells.size === 0) return []
-  const step = SNAP_FINE
-  const visited = new Set<string>()
-  const regions: FloorRegion[] = []
-  // Determine bounds
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-  for (const key of cells) {
-    const [x, y] = key.split(',').map(Number)
-    if (x < minX) minX = x
-    if (y < minY) minY = y
-    if (x > maxX) maxX = x
-    if (y > maxY) maxY = y
-  }
-  let id = 0
-  for (let y = minY; y <= maxY + step / 2; y += step) {
-    for (let x = minX; x <= maxX + step / 2; x += step) {
-      const key = coordKey(x, y)
-      if (!cells.has(key) || visited.has(key)) continue
-      // Extend right
-      let w = 0
-      while (cells.has(coordKey(x + w * step, y)) && !visited.has(coordKey(x + w * step, y))) w++
-      // Extend down while full row matches
-      let h = 1
-      outer: while (true) {
-        for (let dx = 0; dx < w; dx++) {
-          const k = coordKey(x + dx * step, y + h * step)
-          if (!cells.has(k) || visited.has(k)) break outer
-        }
-        h++
-      }
-      // Mark visited
-      for (let dy = 0; dy < h; dy++) {
-        for (let dx = 0; dx < w; dx++) {
-          visited.add(coordKey(x + dx * step, y + dy * step))
-        }
-      }
-      regions.push({ id: `region-${id++}`, x, y, width: w * step, height: h * step })
-    }
-  }
-  return regions
+function dropOrphanDoors(doors: Door[], walls: Wall[], floorRegions: FloorRegion[]): Door[] {
+  return doors.filter((d) => isDoorAttached(d, walls, floorRegions))
 }
 
 function gymLayoutReducer(state: GymLayoutState, action: Action): GymLayoutState {
@@ -155,17 +123,24 @@ function gymLayoutReducer(state: GymLayoutState, action: Action): GymLayoutState
         },
       }
     case 'ADD_FLOOR_REGION': {
-      const cells = regionsToCells(state.room.floorRegions)
+      const existingCells = regionsToCells(state.room.floorRegions)
+      const perimeterWalls = rectPerimeterWalls(action.payload, existingCells, `auto-${nextWallBaseId()}`)
+      const existingKeys = new Set(state.room.walls.map(wallKey))
+      const addedWalls = perimeterWalls.filter((w) => !existingKeys.has(wallKey(w)))
       const { x, y, width, height } = action.payload
       const step = SNAP_FINE
       for (let dx = 0; dx < width - step / 2; dx += step) {
         for (let dy = 0; dy < height - step / 2; dy += step) {
-          cells.add(coordKey(x + dx, y + dy))
+          existingCells.add(coordKey(x + dx, y + dy))
         }
       }
       return {
         ...state,
-        room: { ...state.room, floorRegions: cellsToRegions(cells) },
+        room: {
+          ...state.room,
+          floorRegions: cellsToRegions(existingCells),
+          walls: [...state.room.walls, ...addedWalls],
+        },
       }
     }
     case 'ERASE_FLOOR_AREA': {
@@ -182,12 +157,45 @@ function gymLayoutReducer(state: GymLayoutState, action: Action): GymLayoutState
         room: { ...state.room, floorRegions: cellsToRegions(cells) },
       }
     }
+    case 'ERASE_FLOOR_CELLS': {
+      const cells = regionsToCells(state.room.floorRegions)
+      for (const k of action.payload.cellKeys) cells.delete(k)
+      return {
+        ...state,
+        room: { ...state.room, floorRegions: cellsToRegions(cells) },
+      }
+    }
     case 'ERASE_WALLS_IN_AREA': {
       const rect = action.payload
       const remaining = state.room.walls.filter((w) => !wallCutsRectInterior(w, rect))
       return {
         ...state,
-        room: { ...state.room, walls: remaining },
+        room: {
+          ...state.room,
+          walls: remaining,
+          doors: dropOrphanDoors(state.room.doors, remaining, state.room.floorRegions),
+        },
+      }
+    }
+    case 'REMOVE_DOORS_IN_AREA': {
+      const rect = action.payload
+      const remaining = state.room.doors.filter((d) => !rectsOverlap(doorBoundsAABB(d), rect))
+      return {
+        ...state,
+        room: { ...state.room, doors: remaining },
+      }
+    }
+    case 'REMOVE_EQUIPMENT_IN_AREA': {
+      const rect = action.payload
+      const remaining = state.room.placedEquipment.filter((p) => {
+        const eq = equipmentCatalog.find((e) => e.id === p.equipmentId)
+        if (!eq) return true
+        const dims = getEffectiveDimensions(p, eq)
+        return !rectsOverlap({ x: p.x, y: p.y, width: dims.width, height: dims.depth }, rect)
+      })
+      return {
+        ...state,
+        room: { ...state.room, placedEquipment: remaining },
       }
     }
     case 'CLEAR_FLOOR_REGIONS':
@@ -201,13 +209,17 @@ function gymLayoutReducer(state: GymLayoutState, action: Action): GymLayoutState
     case 'TOGGLE_WALL': {
       const targetKey = wallKey(action.payload)
       const existing = state.room.walls.find((w) => wallKey(w) === targetKey)
+      const newWalls = existing
+        ? state.room.walls.filter((w) => w.id !== existing.id)
+        : [...state.room.walls, action.payload]
       return {
         ...state,
         room: {
           ...state.room,
-          walls: existing
-            ? state.room.walls.filter((w) => w.id !== existing.id)
-            : [...state.room.walls, action.payload],
+          walls: newWalls,
+          doors: existing
+            ? dropOrphanDoors(state.room.doors, newWalls, state.room.floorRegions)
+            : state.room.doors,
         },
       }
     }
@@ -224,11 +236,13 @@ function gymLayoutReducer(state: GymLayoutState, action: Action): GymLayoutState
     }
     case 'REMOVE_WALLS': {
       const removeKeys = new Set(action.payload.map(wallKey))
+      const remainingWalls = state.room.walls.filter((w) => !removeKeys.has(wallKey(w)))
       return {
         ...state,
         room: {
           ...state.room,
-          walls: state.room.walls.filter((w) => !removeKeys.has(wallKey(w))),
+          walls: remainingWalls,
+          doors: dropOrphanDoors(state.room.doors, remainingWalls, state.room.floorRegions),
         },
       }
     }
@@ -238,6 +252,15 @@ function gymLayoutReducer(state: GymLayoutState, action: Action): GymLayoutState
         room: {
           ...state.room,
           walls: [],
+          doors: dropOrphanDoors(state.room.doors, [], state.room.floorRegions),
+        },
+      }
+    case 'CLEAR_EQUIPMENT':
+      return {
+        ...state,
+        room: {
+          ...state.room,
+          placedEquipment: [],
         },
       }
     case 'SET_DEFAULT_CEILING_HEIGHT':

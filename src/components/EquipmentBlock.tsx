@@ -14,9 +14,10 @@ interface Props {
   selected: boolean
   onSelect: (instanceId: string) => void
   room: GymRoom
+  isEraseMode?: boolean
 }
 
-export default function EquipmentBlock({ placed, cellSize, dispatch, selected, onSelect, room }: Props) {
+export default function EquipmentBlock({ placed, cellSize, dispatch, selected, onSelect, room, isEraseMode }: Props) {
   const eq = equipmentCatalog.find((e) => e.id === placed.equipmentId)
   if (!eq) return null
 
@@ -36,8 +37,8 @@ export default function EquipmentBlock({ placed, cellSize, dispatch, selected, o
         backgroundColor: color + '30',
         borderColor: !ceilingCheck.fits ? '#e74c3c' : color,
       }}
-      draggable
-      onDragStart={(e) => {
+      draggable={!isEraseMode}
+      onDragStart={isEraseMode ? undefined : (e) => {
         const rect = e.currentTarget.getBoundingClientRect()
         handleDragStart(e, {
           equipmentId: placed.equipmentId,
@@ -46,7 +47,7 @@ export default function EquipmentBlock({ placed, cellSize, dispatch, selected, o
           offsetY: e.clientY - rect.top,
         })
       }}
-      onClick={(e) => {
+      onClick={isEraseMode ? undefined : (e) => {
         e.stopPropagation()
         onSelect(placed.instanceId)
       }}

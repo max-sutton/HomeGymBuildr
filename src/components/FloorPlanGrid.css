@@ -142,6 +142,17 @@
   transition: background 0.15s;
 }
 
+/* Triangle fills along 45° walls — match .floor-region color so the cell
+   halves on the kept side of a diagonal cut blend into the surrounding cells. */
+.floor-diag-fill {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.floor-diag-fill polygon {
+  fill: #12122a;
+}
+
 /* Perimeter edges — thin border on the outer edge of the combined floor shape */
 .perimeter-edge {
   position: absolute;

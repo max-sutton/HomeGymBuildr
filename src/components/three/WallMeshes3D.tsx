@@ -9,9 +9,9 @@ interface Props {
 }
 
 const WALL_THICKNESS = 0.15
-const WALL_COLOR = '#5a5a7a'
-const INTERIOR_WALL_COLOR = '#e6b43c'
-const DOOR_COLOR = '#64c8b4'
+const WALL_COLOR = '#ffffff'
+const INTERIOR_WALL_COLOR = '#ffffff'
+const DOOR_COLOR = '#8b5a2b'
 const DOOR_HEIGHT = 7
 
 function WallMeshes3D({ room }: Props) {
@@ -45,24 +45,47 @@ function WallMeshes3D({ room }: Props) {
         )
       })}
 
-      {/* Doors — thin panel rendered fully-open, perpendicular to the wall.
-          Box local +x aligns with the grid swingDir; rotation around Y maps
-          grid (sx, sy) onto 3D XZ where grid-y becomes 3D z. */}
+      {/* Doors — solid panel mounted in the wall opening (length along wallDir),
+          plus a flat quarter-circle decal on the floor showing the swing arc.
+          Grid coords map to world as (gx → world X, gy → world Z); after a
+          [-π/2, 0, 0] mesh rotation, geometry's +Y axis lands on world -Z, so
+          a circleGeometry vertex at angle θ ends up at world (cos θ, 0, -sin θ). */}
       {room.doors.map((door) => {
         const doorH = Math.min(DOOR_HEIGHT, h)
         const halfDoorH = doorH / 2
         const g = doorGeometry(door)
         const midX = (g.p0[0] + g.p1[0]) / 2
         const midY = (g.p0[1] + g.p1[1]) / 2
-        const [sx, sy] = g.swingDir
-        const centerX = midX + sx * g.length / 2
-        const centerZ = midY + sy * g.length / 2
-        const rotY = -Math.atan2(sy, sx)
+        const panelRotY = -Math.atan2(g.wallDir[1], g.wallDir[0])
+        const panelThickness = WALL_THICKNESS + 0.05 // pokes out of the wall to avoid z-fight
+
+        // Swing arc — wedge from closed direction (hinge → free) to open direction (swingDir)
+        const closedDx = (g.free[0] - g.hinge[0]) / g.length
+        const closedDy = (g.free[1] - g.hinge[1]) / g.length
+        const thetaClosed = Math.atan2(-closedDy, closedDx)
+        const thetaOpen = Math.atan2(-g.swingDir[1], g.swingDir[0])
+        let dTheta = thetaOpen - thetaClosed
+        while (dTheta > Math.PI) dTheta -= 2 * Math.PI
+        while (dTheta < -Math.PI) dTheta += 2 * Math.PI
+        const thetaStart = dTheta >= 0 ? thetaClosed : thetaOpen
+        const thetaLength = Math.abs(dTheta)
+
         return (
-          <mesh key={door.id} position={[centerX, halfDoorH, centerZ]} rotation={[0, rotY, 0]}>
-            <boxGeometry args={[g.length, doorH, 0.08]} />
-            <meshStandardMaterial color={DOOR_COLOR} transparent opacity={0.6} />
-          </mesh>
+          <group key={door.id}>
+            {/* Door panel mounted in the wall plane */}
+            <mesh position={[midX, halfDoorH, midY]} rotation={[0, panelRotY, 0]}>
+              <boxGeometry args={[g.length, doorH, panelThickness]} />
+              <meshStandardMaterial color={DOOR_COLOR} />
+            </mesh>
+            {/* Swing arc shadow on the floor */}
+            <mesh
+              position={[g.hinge[0], 0.015, g.hinge[1]]}
+              rotation={[-Math.PI / 2, 0, 0]}
+            >
+              <circleGeometry args={[g.length, 48, thetaStart, thetaLength]} />
+              <meshStandardMaterial color="#000000" transparent opacity={0.22} side={2} />
+            </mesh>
+          </group>
         )
       })}
 
