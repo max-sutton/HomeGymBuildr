@@ -6,7 +6,7 @@ import { CATEGORY_COLORS } from '../types'
 import type { Door, Wall } from '../types'
 import { snapToGrid, snapFloor, formatDimension, SNAP_FINE } from '../utils/snap'
 import { checkOverlap, isWithinBounds, getEffectiveDimensions } from '../utils/collision'
-import { getAllWallSegments, findNearestWallSegment, findDoorSegment, mergeInteriorWalls, segmentEndpoints } from '../utils/wallSegments'
+import { getAllWallSegments, findNearestWallSegment, findDoorSegment, mergeInteriorWalls, segmentEndpoints, splitSegmentsAtJunctions } from '../utils/wallSegments'
 import { makeUnitWall, wallOnLine, wallContainsAlong, wallRangeWithin, type WallOrientation } from '../utils/wallGeom'
 import { doorGeometry, doorHingeAlong, doorBoundsAABB } from '../utils/doorGeom'
 import { computeFloorEdges } from '../utils/floorEdges'
@@ -155,6 +155,15 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
   const interiorSegments = useMemo(
     () => wallSegments.filter((s) => !s.isPerimeter),
     [wallSegments]
+  )
+
+  // For wall-mode click rendering: subdivide each merged run at along-axis
+  // points where another wall crosses or T-joins it. Keeps door snapping and
+  // 3D mesh rendering on the unsplit `wallSegments` so a door can still span
+  // across a junction.
+  const splitInteriorSegments = useMemo(
+    () => splitSegmentsAtJunctions(interiorSegments, room.walls),
+    [interiorSegments, room.walls]
   )
 
   // Triangle fills that close the stair-step gap between 45° walls and the
@@ -972,7 +981,7 @@ export default function FloorPlanGrid({ state, dispatch, isDrawMode, isEraseMode
           width={gridWidth}
           height={gridHeight}
         >
-          {interiorSegments.map((seg) => {
+          {splitInteriorSegments.map((seg) => {
             const p = segmentEndpoints(seg)
             return (
               <line
